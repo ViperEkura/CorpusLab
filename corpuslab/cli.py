@@ -35,7 +35,7 @@ def _find_config(explicit: Optional[str]) -> Optional[str]:
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="corpuslab",
-                                description="Declarative SFT data pipeline "
+                                description="Declarative LLM training-data pipeline (SFT + pretraining corpora)"
                                             "(source → synthesize → clean → judge → DuckDB)")
     sub = p.add_subparsers(dest="command", required=True)
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "corpuslab"
 version = "0.1.0"
-description = "声明式 SFT 数据流水线：原料 → 合成 → 清洗 → 评审 → DuckDB 落盘"
+description = "Declarative LLM training-data pipeline: source → synthesize → govern → judge → DuckDB (SFT + pretraining corpora)"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
