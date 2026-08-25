@@ -4,7 +4,18 @@ Streaming and batch are **two separate** stage protocols — batch is async (it 
 to call the embedding client); there is no fat interface forcing both entry
 points (docs/project-structure.md §4).
 """
+
 from __future__ import annotations
+__all__ = [
+    "Material",
+    "Source",
+    "Strategy",
+    "StreamingStage",
+    "BatchStage",
+    "Judge",
+    "Sink",
+    "RunReport",
+]
 
 from typing import Any, AsyncIterator, Protocol, runtime_checkable
 

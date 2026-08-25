@@ -463,6 +463,12 @@ class MyBatchFilter:
 
 **共同约束**：插件不得 import `cli` / 具体兄弟插件；不得自开数据库连接——持久化一律经 `ctx.store`（S1/S2/S4）。
 
+**公开扩展面**（各模块以 `__all__` 白名单约束通配导入）：插件作者只依赖
+`corpuslab.core.registry`（`register_strategy / register_stage / …`）、
+`corpuslab.core.contracts`（五个 Protocol）、`corpuslab.core.sample`
+（`Sample / TaskSpec / Score / derive_id`）、`corpuslab.strategies.base`
+（`PlanExecuteStrategy`）。内部实现走深导入，不在 `__init__` re-export。
+
 ---
 
 *corpuslab 项目结构设计 · 与 README.md「架构」及 checkpoint-design.md 保持一致 · 结构变更须同步更新本文。*

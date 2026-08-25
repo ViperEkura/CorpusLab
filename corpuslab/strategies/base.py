@@ -8,7 +8,12 @@
 - batch size is an engine-internal constant, never exposed as config
   (DESIGN §9.4).
 """
+
 from __future__ import annotations
+__all__ = [
+    "PlanExecuteStrategy",
+    "EXECUTE_BATCH",
+]
 
 import asyncio
 from typing import Any, AsyncIterator, List, Optional

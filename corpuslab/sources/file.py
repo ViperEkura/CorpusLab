@@ -76,5 +76,7 @@ class FileSource:
         rows = iter_input_rows(self.path)
         for i, row in enumerate(rows):
             sample = row_to_sample(row, self.input_format, self.field_map, i)
-            if sample.core_text().strip():
-                yield sample
+            if not sample.core_text().strip():
+                continue
+            sample.validate()          # internal-format contract (data-format.md §2)
+            yield sample

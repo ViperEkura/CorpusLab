@@ -155,6 +155,7 @@ class MyBatch:
 ## 文档索引
 
 - [docs/config-design.md](docs/config-design.md) — 配置 Schema、解析/校验规则、alembic 迁移表
+- [docs/data-format.md](docs/data-format.md) — 内部数据格式契约（Sample JSON Schema、DuckDB 行格式、版本）
 - [docs/checkpoint-design.md](docs/checkpoint-design.md) — DuckDB 状态库、崩溃一致性、resume 协议
 - [docs/project-structure.md](docs/project-structure.md) — 代码组织、核心契约、并发模型
 

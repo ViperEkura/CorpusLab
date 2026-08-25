@@ -3,7 +3,16 @@
 `id` is derived at Plan time (deterministic) and acts as the idempotency key
 for checkpointing (docs/checkpoint-design.md §3).
 """
+
 from __future__ import annotations
+__all__ = [
+    "TaskSpec",
+    "Sample",
+    "Score",
+    "RunReport",
+    "derive_id",
+    "FORMAT_VERSION",
+]
 
 import hashlib
 import json
@@ -77,6 +86,32 @@ class Sample:
         """Stats/length scope (metadata excluded so lineage never skews statistics)."""
         return self.text_for_dedup()
 
+    # ── Validation (data-format.md §2.2) ──────────────────
+    def validate(self, raise_on_error: bool = True) -> list:
+        """Enforce the internal-format constraints (C1–C4). Returns the list
+        of problems; raises ValueError when raise_on_error and any exist."""
+        problems: list = []
+        if not isinstance(self.id, str) or not self.id:
+            problems.append("id must be a non-empty string")
+        if not isinstance(self.strategy, str) or not self.strategy:
+            problems.append("strategy must be a non-empty string")
+        has_msg = bool(self.messages)
+        has_flat = bool(self.instruction) or bool(self.output)
+        if has_msg == has_flat:
+            problems.append(
+                "exactly one form must exist: messages (multi-turn/tool_call) "
+                "XOR instruction/output (single-turn); got both or neither")
+        if not isinstance(self.metadata, dict):
+            problems.append("metadata must be an object")
+        else:
+            for key in ("lineage", "metrics"):
+                if key in self.metadata and not isinstance(self.metadata[key], dict):
+                    problems.append(f"metadata.{key} must be an object")
+        if raise_on_error and problems:
+            raise ValueError(
+                f"invalid Sample {self.id!r}: " + "; ".join(problems))
+        return problems
+
     # ── Serialization ─────────────────────────────────────
     def to_dict(self) -> dict:
         d: dict[str, Any] = {
@@ -99,10 +134,12 @@ class Sample:
         return json.dumps(self.to_dict(), ensure_ascii=False)
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Sample":
+    def from_dict(cls, d: dict, *, validate: bool = True) -> "Sample":
         md = dict(d.get("metadata") or {})
-        md.setdefault("lineage", d.get("lineage") or {})
-        return cls(
+        # Legacy top-level lineage migrates in only when metadata is absent
+        if "metadata" not in d:
+            md.setdefault("lineage", d.get("lineage") or {})
+        sample = cls(
             id=d["id"],
             strategy=d.get("strategy", ""),
             instruction=d.get("instruction", "") or "",
@@ -112,6 +149,9 @@ class Sample:
             tools=list(d.get("tools") or []),
             metadata=md,
         )
+        if validate:
+            sample.validate()
+        return sample
 
     @classmethod
     def from_json(cls, raw: str) -> "Sample":
@@ -119,6 +159,9 @@ class Sample:
 
     def fingerprint(self) -> str:
         return _sha256(self.text_for_dedup())
+
+
+FORMAT_VERSION = "1"
 
 
 @dataclass

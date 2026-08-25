@@ -21,9 +21,11 @@ def config_fingerprint(cfg: Any) -> str:
 
 def write_manifest(store: Any, cfg: Any, *, num_perm: Optional[int] = None,
                    embedding_model: Optional[str] = None, discard: bool = False) -> None:
+    from corpuslab.core.sample import FORMAT_VERSION
     from corpuslab.core.store import SCHEMA_VERSION
     want = {
         "version": SCHEMA_VERSION,
+        "format_version": FORMAT_VERSION,
         "config_hash": config_fingerprint(cfg),
         "seed": str(getattr(getattr(cfg, "run", None), "seed", "") or ""),
     }
@@ -36,6 +38,10 @@ def write_manifest(store: Any, cfg: Any, *, num_perm: Optional[int] = None,
     problems: list = []
     if have.get("version") not in (None, want["version"]):
         problems.append(("version", have.get("version"), want["version"], None))
+
+    if have.get("format_version") not in (None, want["format_version"]):
+        problems.append(("format_version", have.get("format_version"),
+                         want["format_version"], None))
 
     if have.get("config_hash") not in (None, want["config_hash"]):
         problems.append(("config_hash", have.get("config_hash"), want["config_hash"], None))

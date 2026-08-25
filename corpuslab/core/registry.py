@@ -4,7 +4,20 @@ Built-in plugins register via decorators, so they work even when entry points
 are missing (no `pip install`); third-party packages inject via entry points
 without touching corpuslab source.
 """
+
 from __future__ import annotations
+__all__ = [
+    "register",
+    "register_strategy",
+    "register_stage",
+    "register_judge",
+    "register_source",
+    "register_renderer",
+    "register_sink",
+    "lookup",
+    "available",
+    "import_builtin_modules",
+]
 
 import importlib
 import logging
