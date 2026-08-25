@@ -40,7 +40,7 @@ class PlanExecuteStrategy:
     async def execute(self, specs: AsyncIterator[TaskSpec],
                       ctx: Any) -> AsyncIterator[Sample]:
         batch: List[TaskSpec] = []
-        results: List[Optional[Sample]] = []
+        results: List[tuple] = []                 # (spec, outcome)
 
         async def flush():
             if not batch:
@@ -48,7 +48,7 @@ class PlanExecuteStrategy:
             outcomes = await asyncio.gather(
                 *(self._execute_one(s, ctx) for s in batch),
                 return_exceptions=True)
-            results.extend(outcomes)
+            results.extend(zip(list(batch), outcomes))
             batch.clear()
 
         async for spec in specs:
@@ -60,9 +60,15 @@ class PlanExecuteStrategy:
                 await flush()
         await flush()
 
-        for res in results:
+        for spec, res in results:
             if isinstance(res, BaseException):
-                ctx.report.drop(self.type, f"execute_error:{type(res).__name__}")
+                # Record execute failures as terminal drops in the store too —
+                # otherwise the id is neither committed nor dropped and resume
+                # would re-spend LLM calls on it.
+                reason = f"execute_error:{type(res).__name__}"
+                ctx.report.drop(self.type, reason)
+                if ctx.store is not None and not ctx.preview:
+                    ctx.store.drop_sample(spec.id, spec.strategy, self.type, reason)
                 continue
             if res is not None:
                 yield res

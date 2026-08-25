@@ -25,7 +25,7 @@ tools
 ```bash
 pip install -e .                      # httpx / pydantic / pyyaml / datasketch / duckdb
 corpuslab validate -c examples/corpuslab.yaml      # 校验配置
-corpuslab run -c examples/corpuslab.yaml           # 合成 → 治理 → 评审 → DuckDB
+corpuslab run -c examples/corpuslab.yaml           # 合成 → 治理 → 评审 → 输出目录
 corpuslab run -c examples/corpuslab.yaml --resume  # 断点续跑（已终态样本跳过）
 corpuslab clean input.jsonl -o out.duckdb -c corpuslab.yaml   # 对既有语料重跑治理段
 corpuslab score input.duckdb -o scored.duckdb -c corpuslab.yaml  # 补评审
@@ -40,7 +40,7 @@ CORPUSLAB_FAKE_LLM=1 corpuslab run -c examples/corpuslab.yaml   # 离线冒烟
 | 策略 | 原料 × 变异算子；共享 Plan → Execute 骨架，新策略只实现两个方法 |
 | 阶段 | 纯函数治理插件，流式与批式是两个协议 |
 | 评审 | 维度可自定义；多裁判 `mean/min/max/median` 聚合 + `min_judges / max_disagreement / min_total` 治理 |
-| 状态库 | 一个 `.duckdb` 承载 samples/events/pending/embeddings/去重指纹/评分/dropped/planned/manifest 十表 |
+| 状态库 | 输出是一整个文件夹：`corpuslab.duckdb`（samples + 检查点全部状态）+ `samples.parquet`（列式导出，默认开）+ 可选 jsonl |
 | 断点 | 事务原子；`cache_cleanup` 只清瞬时表，终态与去重状态保留 |
 
 ## 文档

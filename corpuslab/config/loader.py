@@ -39,7 +39,31 @@ def _alias_hints(data: dict) -> list:
     return hints
 
 
+def _load_dotenv(paths) -> None:
+    """Minimal .env loader (no external dependency): KEY=VALUE lines.
+
+    Never overrides an already-set environment variable. Looked up in the
+    config file's directory first, then the current working directory.
+    """
+    for p in paths:
+        try:
+            with open(p, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    k, _, v = line.partition("=")
+                    k = k.strip()
+                    v = v.strip().strip('"').strip("'")
+                    if k and k not in os.environ:
+                        os.environ[k] = v
+        except FileNotFoundError:
+            continue
+
+
 def load(path: str) -> S.Config:
+    _load_dotenv([os.path.join(os.path.dirname(os.path.abspath(path)), ".env"),
+                  ".env"])
     with open(path, "r", encoding="utf-8") as f:
         raw = yaml.safe_load(f) or {}
     if not isinstance(raw, dict):
@@ -113,14 +137,47 @@ def derive_format(cfg: S.Config) -> str:
     return "openai" if has_tool else "alpaca"
 
 
-def effective_output_path(cfg: S.Config) -> str:
-    """With storage.type=duckdb the path is the database file (default
-    extension .duckdb)."""
+def layout_for_path(path: str, storage: S.StorageCfg) -> dict:
+    """Resolve an output layout from a path + storage config.
+
+    Modes for storage.type=duckdb:
+    - **dir mode** (default): path is a directory containing
+      `corpuslab.duckdb` (state store) + `samples.parquet` (columnar export,
+      default on) + optional `samples.jsonl`;
+    - **single-file mode** (compat): path ends with `.duckdb` and is the
+      state store itself (exports only when explicitly configured).
+    storage.type=jsonl → plain-file mode.
+
+    Returns {db_path, dir_mode, parquet_path, jsonl_path}.
+    """
+    if storage.type == "jsonl" or path.endswith(".jsonl"):
+        return {"db_path": path, "dir_mode": False,
+                "parquet_path": None, "jsonl_path": path}
+
+    if path.endswith(".duckdb"):
+        return {"db_path": path, "dir_mode": False,
+                "parquet_path": None, "jsonl_path": storage.export_jsonl}
+
+    db_path = os.path.join(path, "corpuslab.duckdb")
+    parquet_path = (os.path.join(path, f"{storage.table}.parquet")
+                    if storage.export_parquet else None)
+    # In dir mode, a relative export_jsonl resolves inside the output dir
+    jsonl_path = (os.path.join(path, storage.export_jsonl)
+                  if storage.export_jsonl else
+                  os.path.join(path, f"{storage.table}.jsonl"))
+    return {"db_path": db_path, "dir_mode": True,
+            "parquet_path": parquet_path, "jsonl_path": jsonl_path}
+
+
+def output_layout(cfg: S.Config) -> dict:
+    """Output layout from `output.path` + `output.storage` (see layout_for_path)."""
     assert cfg.output is not None
-    path = cfg.output.path
-    if cfg.output.storage.type == "duckdb" and not path.endswith(".duckdb"):
-        return path + ".duckdb"
-    return path
+    return layout_for_path(cfg.output.path, cfg.output.storage)
+
+
+def effective_output_path(cfg: S.Config) -> str:
+    """The DuckDB database path (backward-compatible helper)."""
+    return output_layout(cfg)["db_path"]
 
 
 def dumps_state_relevant(cfg: S.Config) -> str:

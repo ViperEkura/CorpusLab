@@ -264,6 +264,28 @@ class Store:
             f"SELECT rendered FROM {self.table} ORDER BY created_at, id").fetchall()
         return [json.loads(r[0]) for r in rows]
 
+    def export_parquet(self, path: str) -> int:
+        """Flatten the canonical payload into a columnar Parquet file
+        (DuckDB native COPY). Returns the number of rows written."""
+        parent = os.path.dirname(os.path.abspath(path))
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        self.conn.execute(f"""
+            COPY (
+                SELECT id, strategy,
+                       json_extract_string(payload, '$.instruction') AS instruction,
+                       json_extract_string(payload, '$.output') AS output,
+                       json_extract_string(payload, '$.reasoning') AS reasoning,
+                       json_extract_string(payload, '$.messages') AS messages,
+                       json_extract_string(payload, '$.tools') AS tools,
+                       json_extract_string(payload, '$.metadata') AS metadata,
+                       total_score
+                FROM {self.table}
+                ORDER BY created_at, id
+            ) TO ? (FORMAT PARQUET)""", [path])
+        return self.conn.execute(
+            f"SELECT count(*) FROM read_parquet(?)", [path]).fetchone()[0]
+
     def sample_count(self) -> int:
         return self.conn.execute(f"SELECT count(*) FROM {self.table}").fetchone()[0]
 

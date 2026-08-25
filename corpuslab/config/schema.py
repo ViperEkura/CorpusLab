@@ -292,7 +292,8 @@ class JudgeCfg(Strict):
 class StorageCfg(Strict):
     type: Literal["duckdb", "jsonl"] = "duckdb"
     table: str = "samples"
-    export_jsonl: Optional[str] = None
+    export_parquet: bool = True            # in dir mode, default export <dir>/samples.parquet
+    export_jsonl: Optional[str] = None     # explicit path; in dir mode defaults to <dir>/samples.jsonl
 
 
 class OutputCfg(Strict):

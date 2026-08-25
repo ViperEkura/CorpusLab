@@ -139,9 +139,9 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
     if preview:
         allocations = [(c, min(n, cfg.run.preview_count)) for c, n in allocations]
 
-    from corpuslab.config.loader import effective_output_path
-    path = effective_output_path(cfg)
-    store = None if preview else Store(path, cfg.output.storage.table)
+    from corpuslab.config.loader import output_layout
+    layout = output_layout(cfg)
+    store = None if preview else Store(layout["db_path"], cfg.output.storage.table)
     ctx = RunContext(cfg, store=store, llm=_make_llm(cfg), preview=preview)
     ctx._minhash_meta = _minhash_meta(cfg)                  # noqa: SLF001
     if needs_embedding(cfg):
@@ -193,9 +193,15 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
         assert store is not None
         sink = DuckDBSink(fmt_out, thinking, cfg.output.storage.table)
         report = await sink.write(_scored(), ctx)
-        export = cfg.output.storage.export_jsonl
-        if export:
-            sink.export_jsonl(store, export)
+        # Exports: parquet (dir mode, default) + optional jsonl
+        parquet_path = layout["parquet_path"]
+        if parquet_path:
+            n = store.export_parquet(parquet_path)
+            log.info("parquet export: %d rows → %s", n, parquet_path)
+        jsonl_path = layout["jsonl_path"]
+        if jsonl_path:
+            n = sink.export_jsonl(store, jsonl_path)
+            log.info("jsonl export: %d rows → %s", n, jsonl_path)
 
     if store is not None and cfg.output.cache_cleanup and not preview:
         store.cache_cleanup()
@@ -207,54 +213,59 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
 async def clean_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
                      input_format: str = "flat", field_map: Optional[dict] = None,
                      resume: bool = False) -> Any:
-    from corpuslab.config.loader import derive_format
+    from corpuslab.config.loader import derive_format, layout_for_path
     from corpuslab.sources.file import FileSource
 
     src = FileSource(input_path, input_format, field_map)
-    out_cfg = output_path or (cfg.output.path if cfg.output else "./cleaned.duckdb")
-    if out_cfg.endswith(".jsonl"):
-        store = None
-    else:
-        if not out_cfg.endswith(".duckdb"):
-            out_cfg += ".duckdb"
-        store = Store(out_cfg, cfg.output.storage.table if cfg.output else "samples")
+    storage = cfg.output.storage if cfg.output else None
+    out_cfg = output_path or (cfg.output.path if cfg.output else "./cleaned")
+    if storage is None:
+        storage = S.StorageCfg()
+    layout = layout_for_path(out_cfg, storage)
+    store = None if layout["dir_mode"] is False and out_cfg.endswith(".jsonl") \
+        else Store(layout["db_path"], storage.table)
     ctx = RunContext(cfg, store=store, llm=None)
     pipeline = build_pipeline(cfg)
     fmt_out = derive_format(cfg)
+    thinking = cfg.output.thinking if cfg.output else False
 
     async def _files() -> AsyncIterator[Sample]:
         async for s in src.open(cfg, ctx):
             yield s
 
     if store is None:
-        sink = JsonlSink(fmt_out, cfg.output.thinking if cfg.output else False)
+        sink = JsonlSink(fmt_out, thinking)
         report = await sink.write(pipeline.run(_files(), ctx), ctx)
     else:
-        sink = DuckDBSink(fmt_out, cfg.output.thinking if cfg.output else False,
-                          cfg.output.storage.table if cfg.output else "samples")
+        sink = DuckDBSink(fmt_out, thinking, storage.table)
         report = await sink.write(pipeline.run(_files(), ctx), ctx)
+        if layout["parquet_path"]:
+            store.export_parquet(layout["parquet_path"])
+        if layout["jsonl_path"]:
+            sink.export_jsonl(store, layout["jsonl_path"])
         store.close()
     return report
 
 
 async def score_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
                      input_format: str = "flat", field_map: Optional[dict] = None) -> Any:
-    from corpuslab.config.loader import derive_format
+    from corpuslab.config.loader import derive_format, layout_for_path
     from corpuslab.sources.file import FileSource
 
     src = FileSource(input_path, input_format, field_map)
-    out_cfg = output_path or (cfg.output.path if cfg.output else "./scored.duckdb")
-    if out_cfg.endswith(".jsonl"):
-        store = None
-    else:
-        if not out_cfg.endswith(".duckdb"):
-            out_cfg += ".duckdb"
-        store = Store(out_cfg, cfg.output.storage.table if cfg.output else "samples")
+    storage = cfg.output.storage if cfg.output else None
+    out_cfg = output_path or (cfg.output.path if cfg.output else "./scored")
+    if storage is None:
+        storage = S.StorageCfg()
+    layout = layout_for_path(out_cfg, storage)
+    store = None if layout["dir_mode"] is False and out_cfg.endswith(".jsonl") \
+        else Store(layout["db_path"], storage.table)
     ctx = RunContext(cfg, store=store, llm=_make_llm(cfg))
     judge = build_judge(cfg)
     if judge is None:
         raise ValueError("score requires judge dimensions or scorers")
     fmt_out = derive_format(cfg)
+    thinking = cfg.output.thinking if cfg.output else False
 
     async def _files() -> AsyncIterator[Sample]:
         async for s in src.open(cfg, ctx):
@@ -268,11 +279,14 @@ async def score_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
             yield s
 
     if store is None:
-        sink = JsonlSink(fmt_out, cfg.output.thinking if cfg.output else False)
+        sink = JsonlSink(fmt_out, thinking)
         report = await sink.write(_scored(), ctx)
     else:
-        sink = DuckDBSink(fmt_out, cfg.output.thinking if cfg.output else False,
-                          cfg.output.storage.table if cfg.output else "samples")
+        sink = DuckDBSink(fmt_out, thinking, storage.table)
         report = await sink.write(_scored(), ctx)
+        if layout["parquet_path"]:
+            store.export_parquet(layout["parquet_path"])
+        if layout["jsonl_path"]:
+            sink.export_jsonl(store, layout["jsonl_path"])
         store.close()
     return report

@@ -316,9 +316,23 @@ pipeline:
 | `cache_cleanup` | bool | true | 成功后只清瞬时表（审计事件、在途缓冲）；**终态集合、去重状态、scores、embeddings 全部保留**（保证 resume 精确） |
 | `storage.type` | string | `duckdb` | `duckdb`（默认）或 `jsonl`（传统纯文件模式，`path` 即 JSONL 文件） |
 | `storage.table` | string | `samples` | DuckDB 表名 |
-| `storage.export_jsonl` | string | — | 可选：成功后把渲染行导出为 JSONL 文件 |
+| `storage.export_parquet` | bool | true | 目录模式下缺省导出 `<dir>/<table>.parquet`（列式，DuckDB 原生 COPY） |
+| `storage.export_jsonl` | string | — | 可选：额外导出行式 JSONL（目录模式下相对路径解析到目录内） |
 
-> `storage.type: duckdb` 时 `output.path` 就是库文件——不存在"必填的 jsonl path + 另一个 duckdb path"的双路径矛盾。
+### 9.1 输出布局
+
+```
+output.path 语义（storage.type=duckdb 时）：
+  目录模式（默认）:  path 是一个目录
+      <path>/corpuslab.duckdb   状态库（samples + 检查点全部状态）
+      <path>/samples.parquet    列式导出（export_parquet 缺省 true）
+      <path>/samples.jsonl      行式导出（仅 export_jsonl 配置时）
+  单文件模式（兼容）:  path 以 .duckdb 结尾 → path 即状态库本身
+  纯文件模式:          storage.type=jsonl → path 即 JSONL 文件
+```
+
+> 输出是一整个文件夹而非单文件：状态库与可交换格式（parquet）同目录产出；
+> 旧配置（`path: xxx.duckdb`）无需改动，自动落入单文件兼容模式。
 
 ---
 
@@ -369,6 +383,10 @@ base_url : 显式值 → $BASE_URL
 embedding.api_key  : 显式值 → $EMBEDDING_API_KEY（不再回退 llm.api_key，防密钥误发第三方端点）
 embedding.base_url : 显式值 → $EMBEDDING_BASE_URL
 ```
+
+**`.env` 自动加载**：配置目录或当前目录存在 `.env` 时，loader 自动读取
+（`KEY=VALUE` 行，`#` 注释，**不覆盖**已存在的环境变量）——凭证放 `.env`
+不入库，代码零改动。示例见 `examples/deepseek.yaml` + 仓库根 `.env`。
 
 ---
 
