@@ -1,0 +1,66 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "corpuslab"
+version = "0.1.0"
+description = "声明式 SFT 数据流水线：原料 → 合成 → 清洗 → 评审 → DuckDB 落盘"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2",
+    "pyyaml",
+    "datasketch>=2.0",
+    "duckdb>=1.0",
+]
+
+[project.optional-dependencies]
+fasttext = ["fasttext-wheel"]
+dev = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+corpuslab = "corpuslab.cli:main"
+
+[project.entry-points."corpuslab.strategies"]
+topic_driven = "corpuslab.strategies.topic_driven:TopicDrivenStrategy"
+deep_thinking = "corpuslab.strategies.deep_thinking:DeepThinkingStrategy"
+seed_driven = "corpuslab.strategies.seed_driven:SeedDrivenStrategy"
+evol_instruct = "corpuslab.strategies.evol_instruct:EvolInstructStrategy"
+document_qa = "corpuslab.strategies.document_qa:DocumentQAStrategy"
+instruction_backtranslation = "corpuslab.strategies.backtranslation:BacktranslationStrategy"
+tool_call = "corpuslab.strategies.tool_call:ToolCallStrategy"
+
+[project.entry-points."corpuslab.stages"]
+length = "corpuslab.stages.length:LengthStage"
+exact_dedup = "corpuslab.stages.exact_dedup:ExactDedupStage"
+stats = "corpuslab.stages.stats:StatsStage"
+minhash_dedup = "corpuslab.stages.minhash:MinHashDedupStage"
+semantic_dedup = "corpuslab.stages.semantic:SemanticDedupStage"
+cluster_dedup = "corpuslab.stages.semantic:ClusterDedupStage"
+
+[project.entry-points."corpuslab.sources"]
+file = "corpuslab.sources.file:FileSource"
+
+[project.entry-points."corpuslab.judges"]
+llm = "corpuslab.judges.llm_judge:LLMJudge"
+fasttext = "corpuslab.judges.local:FastTextScorer"
+
+[project.entry-points."corpuslab.renderers"]
+alpaca = "corpuslab.sinks.renderers:render_alpaca"
+chatml = "corpuslab.sinks.renderers:render_chatml"
+sharegpt = "corpuslab.sinks.renderers:render_sharegpt"
+openai = "corpuslab.sinks.renderers:render_openai"
+
+[project.entry-points."corpuslab.sinks"]
+duckdb = "corpuslab.sinks.duckdb_sink:DuckDBSink"
+jsonl = "corpuslab.sinks.jsonl_sink:JsonlSink"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["corpuslab*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"

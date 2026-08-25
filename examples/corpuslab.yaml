@@ -1,0 +1,82 @@
+run:
+  seed: 42
+  preview: false
+
+llm:
+  model: deepseek-v4-flash
+  lang: zh
+  concurrency: 10
+  params: {temperature: 0.8, max_tokens: 2048}
+  retry: {attempts: 3, backoff: 2.0, max_delay: 30}
+  breaker: {window: 50, max_retry_ratio: 0.9}
+
+embedding:
+  model: text-embedding-v3
+  batch_size: 32
+
+endpoints:
+  pro: {model: deepseek-v4-pro}
+  flash: {}
+
+plan:
+  count: 30
+
+strategies:
+  - type: topic_driven
+    weight: 0.5
+    topics:
+      - {topic: Python basics, weight: 3, knowledge: "Python is dynamically typed and supports OOP and FP."}
+      - {topic: machine learning, weight: 2}
+      - {topic: SQL and databases, weight: 1}
+    dimensions: [{name: difficulty, vals: [easy, medium, hard]}]
+
+  - type: evol_instruct
+    weight: 0.3
+    seed_file: ./seeds.jsonl
+    max_rounds: 2
+    depth_rate: 0.7
+    branch_factor: 1
+    ratio_bounds: [0.5, 5.0]
+    phases:
+      evolve: {temperature: 0.8, max_tokens: 1024}
+      answer: {temperature: 0.6, max_tokens: 2048}
+
+  - type: seed_driven
+    weight: 0.2
+    seed_file: ./seeds.jsonl
+    example_num: 3
+    evolution:
+      crossover: 0.3
+      mutate: 0.3
+      mode: instruction_output
+      mutations:
+        - {name: difficulty, values: [beginner, advanced],
+           prompt: "Change the difficulty to '{value}'"}
+
+pipeline:
+  - {type: length, instruction: [5, 4000], output: [10, 8000]}
+  - {type: exact_dedup}
+  - {type: stats, max_special_char_ratio: 0.3, min_ngram_diversity: 0.2, ngram_n: 3, unit: char}
+  - {type: minhash_dedup, threshold: 0.7, num_perm: 128, ngram_n: 3}
+
+judge:
+  dimensions:
+    - {name: correctness, label: Accuracy, max: 10}
+    - {name: helpfulness, label: Usefulness, max: 10}
+    - {name: completeness, label: Completeness, max: 10}
+  min_total: 15
+  judges: [{endpoint: pro}, {endpoint: flash}]
+  aggregation: mean
+  min_judges: 2
+  max_disagreement: 4
+
+output:
+  path: ./generated_sft.duckdb
+  format: alpaca
+  multi_turn: false
+  thinking: false
+  resume: true
+  storage:
+    type: duckdb
+    table: samples
+    export_jsonl: ./generated_sft.jsonl
