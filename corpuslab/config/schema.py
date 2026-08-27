@@ -278,6 +278,21 @@ class ScorerCfg(Strict):
     dimensions: List[str] = Field(default_factory=list)
 
 
+class PerplexityScorerCfg(Strict):
+    """Route-A perplexity scorer: OpenAI-compatible /completions logprobs."""
+    type: Literal["perplexity"]
+    mode: Literal["teacher_forced", "continuation"] = "continuation"
+    model: Optional[str] = None            # defaults to llm.model
+    base_url: Optional[str] = None         # defaults to llm.base_url (beta path ok)
+    api_key: Optional[str] = None          # explicit wins; else $API_KEY
+    dimensions: List[str] = Field(default_factory=lambda: ["ppl_quality"])
+    nll_ceiling: float = 6.0               # mean NLL mapped to quality 0
+    max_chars: int = 4000                  # scoring input truncation
+    target_ratio: float = 0.5              # continuation split point
+    max_target_tokens: int = 256           # continuation window
+    weight: float = 1.0
+
+
 class JudgeCfg(Strict):
     endpoint: Optional[str] = None
     dimensions: List[JudgeDimension] = Field(default_factory=list)
@@ -287,6 +302,7 @@ class JudgeCfg(Strict):
     min_judges: int = 1
     max_disagreement: float = 0.0
     scorers: List[ScorerCfg] = Field(default_factory=list)
+    perplexity: Optional[PerplexityScorerCfg] = None
 
 
 class StorageCfg(Strict):

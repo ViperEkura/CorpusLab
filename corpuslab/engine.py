@@ -13,6 +13,7 @@ from typing import Any, AsyncIterator, Optional
 from corpuslab.config import schema as S
 from corpuslab.config.loader import (derive_format, env_resolve_embedding,
                                      layout_for_path, output_layout)
+from corpuslab.llm.endpoints import env_fallback_llm, merge_endpoint
 from corpuslab.core import checkpoint, planner
 from corpuslab.core.context import RunContext
 from corpuslab.core.pipeline import Pipeline
@@ -23,6 +24,7 @@ from corpuslab.embedding.client import HttpEmbeddingClient
 from corpuslab.judges.aggregate import AggregateJudge
 from corpuslab.judges.llm_judge import LLMJudge
 from corpuslab.judges.local import FastTextScorer
+from corpuslab.judges.perplexity import PerplexityScorer
 from corpuslab.llm.client import HttpLLMClient
 from corpuslab.sinks.duckdb_sink import DuckDBSink
 from corpuslab.sinks.jsonl_sink import JsonlSink
@@ -71,6 +73,18 @@ def build_judge(cfg: S.Config) -> Optional[AggregateJudge]:
             scorers.append(FastTextScorer(sc))
         else:
             raise ValueError(f"unknown scorer type: {sc.type}")
+    if cfg.judge.perplexity is not None:
+        pcfg = cfg.judge.perplexity
+        base = env_fallback_llm(merge_endpoint(cfg, None))
+        resolved = {
+            "model": pcfg.model or base.model,
+            "base_url": (pcfg.base_url or base.base_url or "").rstrip("/"),
+            "api_key": pcfg.api_key or base.api_key,
+        }
+        scorers.append(PerplexityScorer(pcfg,
+                                        model=resolved["model"],
+                                        base_url=resolved["base_url"],
+                                        api_key=resolved["api_key"]))
     if not has_remote and not scorers:
         return None
     remotes = []
