@@ -25,7 +25,7 @@
 
 | # | 原则 | 落地方式 |
 |---|------|----------|
-| S1 | **依赖单向** | `cli → config → core → {sources, strategies, stages, judges} → {llm, embedding, store} → sinks`；禁止逆向与横向跳跃（strategies 不得 import judges） |
+| S1 | **依赖单向** | `cli / config / core / sources+strategies+stages+judges / llm+embedding+store / sinks` 自上而下单向依赖；禁止逆向与横向跳跃（strategies 不得 import judges） |
 | S2 | **协议在 core，实现在插件包** | 五抽象（Source/Strategy/Stage/Judge/Sink）的 Protocol 定义在 `core/contracts.py`，各插件包只依赖协议 |
 | S3 | **注册表驱动** | 策略/阶段/裁判/**原料/渲染器/存储**通过 entry point 注册，CLI 与引擎按名查找；新增插件零侵入 |
 | S4 | **基础设施唯一** | 重试、熔断、并发信号量只存在于 `llm/client.py`；持久化只存在于 `core/store.py`；任何插件不得自建 HTTP、线程池或独立数据库连接 |
@@ -86,7 +86,7 @@ corpuslab/                          # 仓库根
 | 模块 | 职责 |
 |------|------|
 | `schema.py` | pydantic 声明式 Schema：字段类型、默认值、必填约束；未知键报错并给别名迁移提示 |
-| `loader.py` | YAML → 配置对象：env 回退、端点解析（§10.1）、产量解析（§10.3）、格式推导 |
+| `loader.py` | YAML 解析为配置对象：env 回退、端点解析（§10.1）、产量解析（§10.3）、格式推导 |
 | `validate.py` | 加载期校验：死键、产量冲突、链合法性、端点引用、资源存在性；**按子命令区分必填集** |
 
 **依赖**：仅依赖 `pydantic`，不依赖任何领域模块。
@@ -113,18 +113,18 @@ corpuslab/                          # 仓库根
 | `documents.py` | `.md/.txt/.json/.jsonl` 加载、Unicode 规范化、`field_map` |
 | `chunking.py` | 结构分块 / 语义分块（消费 `embedding` client） |
 | `tools.py` | tool 规格（OpenAI function schema）校验与加载 |
-| `file.py` | **FileSource**：外来 JSONL/DuckDB → canonical Sample 的反向适配（`clean/score` 的入口） |
+| `file.py` | **FileSource**：把外来 JSONL/DuckDB 反向适配为 canonical Sample（`clean/score` 的入口） |
 
 ### 3.4 `strategies/` — 七策略（共享骨架）
 
 | 模块 | 职责 |
 |------|------|
-| `base.py` | `PlanExecuteStrategy` 骨架：Plan（多样性任务单 + 确定性 id）→ Execute（并发填充）；`_safe()` 统一包「调用 + 解析」 |
+| `base.py` | `PlanExecuteStrategy` 骨架：Plan（多样性任务单 + 确定性 id）与 Execute（并发填充）两段；`_safe()` 统一包「调用 + 解析」 |
 | `topic_driven.py` | 概念源：槽位笛卡尔采样 + knowledge 注入 |
 | `deep_thinking.py` | 概念源 + 强制 reasoning |
 | `seed_driven.py` | 样本源：few-shot / 交叉 / 变异轮盘 |
 | `evol_instruct.py` | 多轮进化：深度/广度、`ratio_bounds` 闸门、进化链 lineage、**每轮一个 id** |
-| `document_qa.py` | 分块 → 依据原文生成 QA，`source_text` 入 metadata |
+| `document_qa.py` | 先分块再依据原文生成 QA，`source_text` 入 metadata |
 | `backtranslation.py` | 反推指令，**源文本锁定为 output** |
 | `tool_call.py` | 轨迹生成 + 强校验解析器（未知函数/非法 JSON/重复 ID/断链拒绝） |
 
@@ -144,14 +144,14 @@ corpuslab/                          # 仓库根
 |------|------|
 | `llm_judge.py` | LLM-as-Judge：维度提示构造、JSON 分数解析（走 `llm/client` 重试；结果入 `scores` 缓存） |
 | `local.py` | 本地 scorer：`fasttext`（可选 extra；未安装时引用报明确错误） |
-| `aggregate.py` | 多裁判聚合：语义见 README.md「评审」一节（逐维聚合 → 本地缩放 → 求和；`min_judges` / `max_disagreement` 不满足即 drop） |
+| `aggregate.py` | 多裁判聚合：语义见 README.md「评审」一节（逐维聚合、本地缩放、求和三步；`min_judges` / `max_disagreement` 不满足即 drop） |
 
 ### 3.7 `llm/` / `embedding/` — 基础设施
 
 | 模块 | 职责 |
 |------|------|
 | `llm/client.py` | **唯一**重试原语 `retry_with_backoff`、按端点熔断器、每端点信号量、OpenAI 兼容调用 |
-| `llm/endpoints.py` | 端点解析缓存：`resolve(name) → ResolvedEndpoint` |
+| `llm/endpoints.py` | 端点解析缓存：`resolve(name)` 返回 `ResolvedEndpoint` |
 | `embedding/client.py` | 全局唯一 embedding client：批处理、`store.embeddings` 内容寻址缓存、与 llm 同样的重试语义 |
 
 ### 3.8 `sinks/` — 渲染与落盘
@@ -214,23 +214,18 @@ class Sink(Protocol):
 ### 5.1 `run`（完整流水线，内存直通）
 
 ```
-cli.run
-  → config.loader.load(path)                     # env 回退 + 端点/产量解析
-  → config.validate.check(cfg, subcommand)       # 死键/冲突拦截（按子命令区分必填集）
-  → core.planner.allocate(cfg)                   # weight 分摊 → 各策略 budget
-  → store.open(output)                           # DuckDB 状态库；resume 时走 checkpoint.restore
-  → registry 按名装配 sources / strategies / stages / judges / sinks
-  → asyncio:
-       for strategy in strategies:
-           source.open(cfg) → strategy.plan() → planned 入库（跳过 terminal）
-                                     │
-                                     ▼ execute（并发，端点信号量）
-       合并流 ──▶ pipeline.run(全局单实例)        # 流式段与生成并发；批式屏障（pending 表背压）
-                     │
-                     ▼ judge.score(sample)        # scores 缓存命中即跳过 → aggregate → min_total
-                     │
-                     ▼ sink.write(render(sample)) # 事务提交：samples + committed 事件
-  → RunReport
+1. `config.loader.load(path)` 加载配置（env 回退 + 端点/产量解析）；
+2. `config.validate.check(cfg, subcommand)` 拦截死键与冲突（按子命令区分必填集）；
+3. `core.planner.allocate(cfg)` 按 weight 分摊出各策略 budget；
+4. `store.open(output)` 打开 DuckDB 状态库；resume 时先走 `checkpoint.restore`；
+5. registry 按名装配 sources / strategies / stages / judges / sinks；
+6. asyncio 执行：每个策略先 `source.open` 再 `strategy.plan`（planned 入库，跳过
+   terminal），随后并发 execute（端点信号量限流）；所有策略的样本汇入全局单实例
+   `pipeline.run`（流式段与生成并发，批式屏障由 pending 表提供磁盘背压）；
+7. 流水线输出依次经过 `judge.score`（scores 缓存命中即跳过该端点重评，聚合后按
+   min_total 过滤）与 `sink.write(render(sample))`（事务提交 samples 与 committed
+   事件）；
+8. 汇总 RunReport。
 ```
 
 **所有策略的 execute 汇入同一条 pipeline**：去重状态跨策略共享（README.md「治理链」一节）。
@@ -238,8 +233,8 @@ cli.run
 ### 5.2 `clean` / `score`（同一条流水线的截取）
 
 ```
-clean : FileSource → pipeline → Sink            # 无策略、无评审
-score : FileSource → judge → Sink               # 无策略、无治理
+clean : FileSource, pipeline, Sink   （无策略、无评审）
+score : FileSource, judge, Sink      （无策略、无治理）
 ```
 
 `FileSource`（`sources/file.py`）把外来 JSONL/DuckDB 反向适配为 canonical Sample（`--input-format` 指定 alpaca/chatml/sharegpt/openai/flat，`--field-map` 做字段改名）。
@@ -248,11 +243,11 @@ score : FileSource → judge → Sink               # 无策略、无治理
 
 ```
 Plan：spec 入 planned 表（id 主键，幂等）
-Execute 前：terminal = samples ∪ dropped → 跳过
+Execute 前：terminal = samples ∪ dropped，命中即跳过
 阶段判定：pass 时状态（指纹/签名）与判定同事务写入；drop 时入 dropped 表
 屏障：批式阶段把在途样本写入 pending 表（磁盘背压），屏障后清理
 提交：BEGIN; INSERT samples; INSERT events('committed'); DELETE pending; COMMIT
-resume：manifest 兼容性检查 → 重建 LSH 索引 → 重载 pending/scores/embeddings → 增量 Plan
+resume：manifest 兼容性检查；随后重建 LSH 索引、重载 pending/scores/embeddings、增量 Plan
 ```
 
 不变式：**任何时刻中断进程，状态库中 `samples ∪ dropped` 恰等于已终态样本；重跑不产生重复样本**（重放幂等，见 checkpoint-design.md §5/§6）。
@@ -261,22 +256,15 @@ resume：manifest 兼容性检查 → 重建 LSH 索引 → 重载 pending/score
 
 ## 6. 并发模型
 
-```
-┌──────────────────────────── run 进程 ────────────────────────────┐
-│                                                                  │
-│  Strategy.execute ──▶ 端点信号量 (llm.concurrency / endpoints.*) │
-│       │                    │                                     │
-│       │              retry_with_backoff（唯一重试原语）           │
-│       ▼                    │                                     │
-│  流式 Stage 组 ──▶ 单消费者协程（pull 模型，天然背压）             │
-│       │                                                          │
-│  批式 Stage ──▶ 屏障（pending 表背压，apply_batch 一次执行）       │
-│       │                                                          │
-│  Judge ──▶ 各端点信号量（与生成共享同一把锁）                      │
-│                                                                  │
-│  Store ──▶ DuckDB 连接只在事件循环内使用（单写者，无锁）           │
-└──────────────────────────────────────────────────────────────────┘
-```
+`run` 进程内的并发结构：
+
+| 环节 | 并发机制 | 说明 |
+|---|---|---|
+| `Strategy.execute` | 端点信号量（`llm.concurrency` / `endpoints.*`），经唯一重试原语 `retry_with_backoff` | 生成调用限流与重试 |
+| 流式 Stage 组 | 单消费者协程（pull 模型，天然背压） | 与生成并发 |
+| 批式 Stage | 屏障（pending 表背压，`apply_batch` 一次执行） | 攒批处理 |
+| Judge | 各端点信号量（与生成共享同一把锁） | 评审限流 |
+| Store | DuckDB 连接只在事件循环内使用 | 单写者，无锁 |
 
 - **信号量按端点持有**：`llm.concurrency: 10` 与 `endpoints.pro.concurrency: 4` 各自独立计数，生成与评审共享同一把锁，不会超卖；
 - **熔断按端点独立计数**：评审端点故障不中止生成；所有在用端点均熔断才中止整轮（退出码 3，状态库保留）；
@@ -291,7 +279,7 @@ resume：manifest 兼容性检查 → 重建 LSH 索引 → 重载 pending/score
 |----|------|------|
 | 单次调用 | `retry_with_backoff`：指数退避，`attempts/backoff/max_delay` | `llm/client.py`（唯一实现） |
 | 解析失败 | 与网络失败同路径重试（`Strategy._safe` 包「调用 + 解析」） | `strategies/base.py` |
-| 整轮运行 | 熔断：滑动窗口重试占比 > `max_retry_ratio` → 中止 + 状态库保留 | `llm/client.py` |
+| 整轮运行 | 熔断：滑动窗口重试占比 > `max_retry_ratio` 即中止并保留状态库 | `llm/client.py` |
 | 样本级 | Stage drop(reason) 不中断运行，计入报告 | `core/pipeline.py` |
 | 断点 | DuckDB 事务原子提交；`resume` 幂等续跑 | `core/store.py` / `core/checkpoint.py` |
 | 配置 | 加载期拦截（死键/冲突/资源缺失） | `config/validate.py` |
@@ -315,7 +303,7 @@ corpuslab validate  [-c CONFIG] [run|clean|score]
 | `--count` | 覆盖 `plan.count`（仅 run） |
 | `--preview` | 覆盖 `run.preview`：小批量（`preview_count`，缺省 8）、不落库、不落断点（**仍调 LLM**） |
 | `--discard-state` | manifest 不兼容时丢弃受影响状态并继续（缺省拒绝） |
-| `clean/score` 的 `-o` | DuckDB 库路径（`.duckdb`）或 JSONL 路径（`.jsonl` → 自动切 jsonl 模式） |
+| `clean/score` 的 `-o` | DuckDB 库路径（`.duckdb`）或 JSONL 路径（`.jsonl` 自动切换为 jsonl 模式） |
 | 退出码 | 0 成功；2 配置错误；3 运行期熔断/中断（状态库保留）；4 输入资源缺失 |
 
 ### 启动链路
@@ -334,17 +322,17 @@ python -m corpuslab run             # 经 __main__.py，效果完全等价
 
 ```
 main(argv)
-  → argparse 解析子命令与参数
-  → 定位配置：-c 路径 ?? ./corpuslab.yaml ?? ./corpuslab.yml        （找不到 → 退出码 2）
-  → config.loader.load()    # env 回退、端点解析、产量解析、格式推导
-  → config.validate.check() # 死键 / 产量冲突 / 资源存在性（按子命令） （失败 → 退出码 2 / 4）
-  → 构造 RunContext         # seed、已解析端点、事件总线
-  → registry 按名装配       # sources / strategies / stages / judges / sinks
-  → asyncio.run(子命令协程)                                        （熔断 → 退出码 3）
-  → RunReport 汇总输出，返回退出码 0
+  1. argparse 解析子命令与参数
+  2. 定位配置：-c 路径 ?? ./corpuslab.yaml ?? ./corpuslab.yml    （找不到即退出码 2）
+  3. config.loader.load()      env 回退、端点解析、产量解析、格式推导
+  4. config.validate.check()   死键 / 产量冲突 / 资源存在性（按子命令）（失败即退出码 2 或 4）
+  5. 构造 RunContext           seed、已解析端点、事件总线
+  6. registry 按名装配         sources / strategies / stages / judges / sinks
+  7. asyncio.run(子命令协程)                                  （熔断即退出码 3）
+  8. RunReport 汇总输出，返回退出码 0
 ```
 
-CLI 层自身**不含业务逻辑**：只做「解析 → 加载 → 校验 → 装配 → 交给引擎」（S1）。
+CLI 层自身**不含业务逻辑**：只做「解析、加载、校验、装配、交给引擎」（S1）。
 
 ---
 
@@ -460,7 +448,7 @@ class MyBatchFilter:
 |--------|------|------|
 | 原料 | `Source.open` | `corpuslab.sources` entry point |
 | 本地 scorer | `Judge.score` 纯函数 | `corpuslab.judges` |
-| 输出格式 | 渲染纯函数 `Sample → dict` | `corpuslab.renderers` |
+| 输出格式 | 渲染纯函数：输入 Sample 输出 dict | `corpuslab.renderers` |
 | 存储 | `Sink.write` | `corpuslab.sinks` |
 
 **共同约束**：插件不得 import `cli` / 具体兄弟插件；不得自开数据库连接——持久化一律经 `ctx.store`（S1/S2/S4）。

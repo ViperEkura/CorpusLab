@@ -32,7 +32,7 @@
 |---|------|----------------|
 | P1 | 一处生效 | 同一语义（长度、去重、并发、温度、产量）只出现一次 |
 | P2 | 无死开关 | 不提供无行为差异的键；未实现的能力不入 Schema |
-| P3 | 分层默认，显式三层封顶 | `llm` 全局默认 → `endpoints.<name>` 差异声明；第三层**只允许 `params` 类字段**（`phases.<p>`） |
+| P3 | 分层默认，显式三层封顶 | `llm` 全局默认，`endpoints.<name>` 差异声明；第三层**只允许 `params` 类字段**（`phases.<p>`） |
 | P4 | 阶段即插件 | `pipeline` 是有序阶段链，每个阶段一个 `type` + 参数 |
 | P5 | 产量声明唯一 | `plan.count` 声明总量，`weight` 声明比例，策略 `count` 仅作份额覆盖；边界见 §10.3 |
 | P6 | 可溯源、尽量可复现 | `run.seed` 控制全部本地随机源；id 确定性保证断点可续 |
@@ -110,7 +110,7 @@ llm:
   breaker: {window: 50, max_retry_ratio: 0.9}
 ```
 
-**`retry` 与 `breaker` 的分工**：`retry` 管「单次调用的韧性」（指数退避重试）；`breaker` 管「整轮运行的安全」（滑动窗口内重试占比超阈值 → 中止并保留状态库）。二者语义不同，缺一不可。
+**`retry` 与 `breaker` 的分工**：`retry` 管「单次调用的韧性」（指数退避重试）；`breaker` 管「整轮运行的安全」（滑动窗口内重试占比超阈值即中止并保留状态库）。二者语义不同，缺一不可。
 
 ### 4.2 `endpoints` — 命名端点（差异声明）
 
@@ -127,8 +127,8 @@ endpoints:
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
 | `model` | string | `text-embedding-v3` | 模型名 |
-| `api_key` | string | 回退链见 §10.4 | 显式值 → `$EMBEDDING_API_KEY` |
-| `base_url` | string | 同上 | 显式值 → `$EMBEDDING_BASE_URL` |
+| `api_key` | string | 回退链见 §10.4 | 显式值优先，否则 `$EMBEDDING_API_KEY` |
+| `base_url` | string | 同上 | 显式值优先，否则 `$EMBEDDING_BASE_URL` |
 | `batch_size` | int | 32 | 批大小 |
 
 消费方两处：`document_qa` 语义分块、`semantic_dedup`/`cluster_dedup` 阶段。**单一端点，两处消费，不重复配置。**
@@ -155,7 +155,7 @@ endpoints:
 | `type` | string | **必填** | 策略类型，见下 |
 | `weight` | float | 1.0 | `plan.count` 分摊比例（**自动归一化**，validate 提示） |
 | `count` | int | — | 显式覆盖本策略份额（边界见 §10.3） |
-| `field_map` | dict | `{}` | 输入文件字段 → 规范字段映射（外来数据适配） |
+| `field_map` | dict | `{}` | 输入文件字段到规范字段的映射（外来数据适配） |
 
 ### 6.1 七策略参数表
 
@@ -186,7 +186,7 @@ endpoints:
 | `topic` | string | 随机 | 固定主题；种子自带 topic 时优先 |
 | `evolution` | dict | — | 遗传算子，见下 |
 
-`evolution`（轮盘选择：`crossover` → `mutate` → 其余 few-shot）：
+`evolution`（轮盘选择，依次判定：`crossover`、`mutate`、其余 few-shot）：
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
@@ -267,7 +267,7 @@ endpoints:
 | `stats` | 流式 | `max_special_char_ratio: 0.3`、`max_word_repetition: 0.5`、`max_char_repetition: 0.5`、`min_ngram_diversity: 0.2`、`ngram_n: 3`、`unit: char` | 统计清洗 |
 | `minhash_dedup` | 流式 | `threshold: 0.7`、`num_perm: 128`、`ngram_n: 3` | LSH 近似去重（签名入 `minhash_sigs` 表；threshold 改动 resume 兼容） |
 | `semantic_dedup` | 批式 | `threshold: 0.85` | embedding 余弦去重（`pending` 表背压 + `embeddings` 缓存） |
-| `cluster_dedup` | 批式 | — | LSH 聚簇 → 拥挤簇语义精排 |
+| `cluster_dedup` | 批式 | — | LSH 聚簇后对拥挤簇做语义精排 |
 
 ```yaml
 pipeline:
@@ -291,16 +291,16 @@ pipeline:
 | `min_total` | float | 0.0 | 总分阈值，低于即过滤（量纲 = Σ各维 max，见下） |
 | `judges` | array | `[]` | 多裁判：`[{endpoint}]`；**非空时以 judges 为准，`endpoint` 被忽略（validate 提示）** |
 | `aggregation` | string | `mean` | `mean/min/max/median`，作用于「同维度 × 各裁判」 |
-| `min_judges` | int | 1 | 每样本最少成功裁判数，不足 → drop(`insufficient_judges`) |
-| `max_disagreement` | float | 0 | 单维 (max−min) 分差上限；超出 → drop(`judge_disagreement`)；0 = 不启用 |
+| `min_judges` | int | 1 | 每样本最少成功裁判数，不足则 drop(`insufficient_judges`) |
+| `max_disagreement` | float | 0 | 单维 (max−min) 分差上限；超出则 drop(`judge_disagreement`)；0 表示不启用 |
 | `scorers` | array | `[]` | 本地打分器：`[{type: fasttext, model_path, weight}]`（fasttext 为可选 extra） |
 
 **聚合语义**（精确定义，实现以此为准）：
 
-1. 每维度：远端各裁判分数按 `aggregation` 聚合 → 维度值；
+1. 每维度：远端各裁判分数按 `aggregation` 聚合为维度值；
 2. 本地 scorer 输出 [0,1] 原始值，缩放为 `维度 max × weight` 写入**同名维度**；同名维度远端优先，本地仅作 `score_source` 标注；
 3. `total_score = Σ 维度值`（绝对分量纲）；`min_total` 与之同量纲比较；
-4. `min_total` 不满足 → drop(`min_total`)。
+4. `min_total` 不满足则 drop(`min_total`)。
 
 ---
 
@@ -327,8 +327,8 @@ output.path 语义（storage.type=duckdb 时）：
       <path>/corpuslab.duckdb   状态库（samples + 检查点全部状态）
       <path>/samples.parquet    列式导出（export_parquet 缺省 true）
       <path>/samples.jsonl      行式导出（仅 export_jsonl 配置时）
-  单文件模式（兼容）:  path 以 .duckdb 结尾 → path 即状态库本身
-  纯文件模式:          storage.type=jsonl → path 即 JSONL 文件
+  单文件模式（兼容）:  path 以 .duckdb 结尾，path 即状态库本身
+  纯文件模式:          storage.type=jsonl，path 即 JSONL 文件
 ```
 
 > 输出是一整个文件夹而非单文件：状态库与可交换格式（parquet）同目录产出；
@@ -368,9 +368,9 @@ format = output.format                                  # 显式声明最优先
 plan.count 存在:
     weight 归一化后分摊（weight 之和不必为 1，自动归一，validate 提示）
     余数分配给权重最大者；策略显式 count 覆盖其份额
-    显式 count 之和 > plan.count → validate error（防产量静默超发）
+    显式 count 之和 > plan.count 时 validate 报错（防产量静默超发）
 plan.count 缺省:
-    各策略显式 count 之和；任一策略无 count → validate error（消息指明缺哪个策略）
+    各策略显式 count 之和；任一策略无 count 则 validate 报错（消息指明缺哪个策略）
 --strategy S 过滤:
     被选中策略间按上述规则重新分摊；未选中策略不参与
 ```
@@ -378,10 +378,10 @@ plan.count 缺省:
 ### 10.4 环境变量回退
 
 ```
-api_key  : 显式值 → $API_KEY
-base_url : 显式值 → $BASE_URL
-embedding.api_key  : 显式值 → $EMBEDDING_API_KEY（不再回退 llm.api_key，防密钥误发第三方端点）
-embedding.base_url : 显式值 → $EMBEDDING_BASE_URL
+api_key  : 显式值优先，否则 $API_KEY
+base_url : 显式值优先，否则 $BASE_URL
+embedding.api_key  : 显式值优先，否则 $EMBEDDING_API_KEY（不回退 llm.api_key，防密钥误发第三方端点）
+embedding.base_url : 显式值优先，否则 $EMBEDDING_BASE_URL
 ```
 
 **`.env` 自动加载**：配置目录或当前目录存在 `.env` 时，loader 自动读取
@@ -396,7 +396,7 @@ embedding.base_url : 显式值 → $EMBEDDING_BASE_URL
 
 | 类别 | 规则 | 级别 |
 |------|------|------|
-| 死键 | 未知字段、历史别名（`total_count` → 提示改 `count`） | error |
+| 死键 | 未知字段、历史别名（`total_count` 提示改 `count`） | error |
 | 必填（run） | `llm.model`、`strategies` 非空、`output.path`、启用评审时 `judge.dimensions` | error |
 | 必填（score） | `llm.model`、`judge.dimensions`（或 scorers 非空）、输入存在 | error |
 | 必填（clean） | 输入存在 | error |
@@ -416,7 +416,7 @@ embedding.base_url : 显式值 → $EMBEDDING_BASE_URL
 
 | alembic | corpuslab | 说明 |
 |---------|-----------|------|
-| `api.*` | `llm.*` | 段改名；`retry.max_retries → attempts` |
+| `api.*` | `llm.*` | 段改名；`retry.max_retries` 改 `attempts` |
 | `api.auto_stop.*` | `llm.breaker.*` | 改名正名 |
 | `api.lang` / `scoring.lang` | `llm.lang` | 合一 |
 | `scoring.{model,api_key,base_url}` | `endpoints.<name>` + `judge.endpoint` | 引用替代复制 |

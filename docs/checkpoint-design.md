@@ -44,8 +44,8 @@
 |-------|------|--------|-----------|
 | `length` | 流式 | 无（A 类） | 无需恢复 |
 | `stats` | 流式 | 无（A 类） | 无需恢复 |
-| `exact_dedup` | 流式 | `fingerprints`（SHA256 → sample_id） | 直接读表 |
-| `minhash_dedup` | 流式 | `minhash_sigs`（签名） | 签名重放 → 重建 LSH 索引（索引是视图，不是状态） |
+| `exact_dedup` | 流式 | `fingerprints`（SHA256 到 sample_id 的映射） | 直接读表 |
+| `minhash_dedup` | 流式 | `minhash_sigs`（签名） | 签名重放重建 LSH 索引（索引是视图，不是状态） |
 | `semantic_dedup` | 批式 | `pending`（样本缓冲）+ `embeddings`（向量，B 类） | 重载缓冲与向量后执行屏障 |
 | `cluster_dedup` | 批式 | 同上；聚类本身 A 类 | 向量重载后重算聚类 |
 
@@ -55,7 +55,7 @@
 
 ## 3. sample_id：在花钱之前确定
 
-id 必须满足：**在 LLM 调用之前就能算出**（resume 要在「是否生成」这个决策点使用它），且**确定性**（同 seed 同配置 → 同 id）。因此 id 在 **Plan 阶段**由任务单的槽位坐标派生，而非内容哈希：
+id 必须满足：**在 LLM 调用之前就能算出**（resume 要在「是否生成」这个决策点使用它），且**确定性**（同 seed 同配置得到同 id）。因此 id 在 **Plan 阶段**由任务单的槽位坐标派生，而非内容哈希：
 
 ```
 topic_driven : "topic:{strategy_seq}:{topic}|{difficulty}|{aspect}|{n}"
@@ -133,7 +133,7 @@ BEGIN
 COMMIT
 ```
 
-- 崩溃在事务中 → 回滚，既无输出也无标记，该样本按 id 幂等重做；
+- 崩溃在事务中则回滚，既无输出也无标记，该样本按 id 幂等重做；
 - 阶段状态（指纹、签名）与 drop 记录同样在事务中写入，与判定同时生效；
 - **无锁单写者**：所有事务在事件循环内串行（asyncio 单线程）；DuckDB 连接不跨线程共享，CPU 密集步骤经 `asyncio.to_thread` 卸载时使用独立只读连接或回到主循环写；
 - **幂等重放**：所有 upsert 以 id / hash 为主键，resume 重放多少遍都安全。
@@ -145,14 +145,14 @@ COMMIT
 ```
 resume():
   1. 打开 .duckdb，读 manifest（见 §7）
-     └ 不兼容 → 拒绝（exit 2），或 --discard-state 丢弃受影响状态并警告
+     └ 不兼容: 拒绝（exit 2），或 --discard-state 丢弃受影响状态并警告
   2. terminal = samples.id ∪ dropped.id               # 进度
   3. 流式状态：fingerprints / minhash_sigs 直接读；
      minhash LSH 索引由签名重放重建（当前 threshold）
   4. 批式缓冲：pending 表中样本重新进入屏障等待
   5. 评审缓存：scores 按 (id, endpoint) 命中即跳过该端点重评
   6. 对账：planned 中未 executed 且未 terminal 的任务单重新执行
-  7. Plan 增量补任务单（跳过 terminal）→ Execute → Pipeline → Judge → Sink
+  7. 7. Plan 增量补任务单（跳过 terminal），随后 Execute、Pipeline、Judge、Sink
 ```
 
 控制流前提（对应 README.md「治理链」一节）：**所有策略的 execute 汇入同一条 pipeline**——一份状态、一个全局去重视图，跨策略重复才可见。

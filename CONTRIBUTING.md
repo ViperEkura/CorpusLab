@@ -49,7 +49,7 @@ python -m pytest tests/ -q    # 全部通过（当前 64 项）
 
 - 测试走假 LLM / 假 embedding（`corpuslab/testing.py`），**零真实 API 调用**；
 - 新增策略/阶段必须附带契约测试：plan 的 **id 唯一性** 与 **seed 确定性**（resume 幂等的根基，回归会静默丢数据）；
-- 修改内部格式或状态库表结构 → 更新 `docs/data-format.md` 并 `FORMAT_VERSION`/`SCHEMA_VERSION + 1`。
+- 修改内部格式或状态库表结构时，须更新 `docs/data-format.md` 并递增 `FORMAT_VERSION`/`SCHEMA_VERSION`。
 
 ## 6. 依赖
 

@@ -104,8 +104,8 @@
 
 ## 5. 变更流程
 
-1. 改 `Sample` 形态（加字段/改约束）→ `FORMAT_VERSION + 1`，同步本文 §2；
-2. DuckDB 表结构变更 → `SCHEMA_VERSION + 1` + 迁移脚本，同步本文 §4；
+1. 改 `Sample` 形态（加字段/改约束）时 `FORMAT_VERSION + 1` 并同步本文 §2；
+2. DuckDB 表结构变更时 `SCHEMA_VERSION + 1` 加迁移脚本，并同步本文 §4；
 3. 渲染器（alpaca/chatml/sharegpt/openai）**只读** canonical 形态，不反向影响内部格式。
 
 ---
