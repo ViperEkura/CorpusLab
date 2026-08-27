@@ -100,7 +100,7 @@ class PlanExecuteStrategy:
         return base
 
     @staticmethod
-    def make_sample(spec: TaskSpec, *, instruction: str, output: str = "",
+    def make_sample(spec: TaskSpec, *, instruction: str = "", output: str = "",
                     reasoning: str = "", messages: list = None,
                     tools: list = None, extra_meta: dict = None) -> Sample:
         md = {"lineage": dict(spec.lineage)}

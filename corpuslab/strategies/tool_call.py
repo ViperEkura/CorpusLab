@@ -15,16 +15,21 @@ _SYS = ("You generate realistic tool-calling conversations. Use only the "
 
 
 def validate_trajectory(messages: list, tools: list) -> str | None:
-    """Return a rejection reason, or None when the trajectory is valid."""
+    """Return a rejection reason, or None when the trajectory is valid.
+
+    Parallel tool calls are valid OpenAI form: one assistant message may open
+    several calls; each must get exactly one tool result (order-insensitive),
+    and every opened call must be answered before the next plain assistant
+    turn closes the block."""
     known = {t["function"]["name"] for t in tools if t.get("function")}
     seen_ids: set = set()
-    pending_call: str | None = None
+    pending_calls: list = []                 # opened but unanswered call ids
 
     for m in messages:
         role = m.get("role")
         if role == "assistant":
             calls = m.get("tool_calls") or []
-            if pending_call and not calls:
+            if pending_calls and not calls:
                 return "broken_chain:no_result"
             for c in calls:
                 cid = (c.get("id") or "").strip()
@@ -40,13 +45,16 @@ def validate_trajectory(messages: list, tools: list) -> str | None:
                     json.loads((c["function"].get("arguments") or "{}"))
                 except (json.JSONDecodeError, TypeError):
                     return "invalid_arguments_json"
-                pending_call = cid
+                pending_calls.append(cid)
         elif role == "tool":
             cid = (m.get("tool_call_id") or "").strip()
-            if cid != pending_call:
+            if cid not in pending_calls:
                 return "broken_chain:orphan_result"
-            pending_call = None
-    if pending_call:
+            # every result must answer a distinct call; the same id twice
+            # would have hit duplicate handling only on assistant side
+            seen_ids.add(cid)
+            pending_calls.remove(cid)
+    if pending_calls:
         return "broken_chain:no_result"
     return None
 
