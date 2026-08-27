@@ -13,7 +13,7 @@ Rules (config-design.md §10.3; this module is the normative implementation):
 """
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
+from typing import Any, List, Optional, Tuple
 
 
 class PlanError(ValueError):

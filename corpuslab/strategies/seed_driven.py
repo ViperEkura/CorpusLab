@@ -4,10 +4,8 @@ from __future__ import annotations
 import random
 from typing import Any, AsyncIterator
 
-from corpuslab.config.loader import extract_json_object
 from corpuslab.core.registry import register_strategy
 from corpuslab.core.sample import TaskSpec, derive_id
-from corpuslab.sources import load_seeds
 from corpuslab.strategies.base import PlanExecuteStrategy
 
 
@@ -31,7 +29,9 @@ class SeedDrivenStrategy(PlanExecuteStrategy):
 
     async def _plan(self, materials: AsyncIterator[Any], budget: int,
                     ctx: Any) -> AsyncIterator[TaskSpec]:
-        seeds = load_seeds(self.cfg.seed_file, self.cfg.field_map)
+        seeds = [m async for m in materials]      # SeedSource stream (§5.1)
+        if not seeds:
+            raise ValueError("seed source yielded no seeds")
         # NOTE: never use builtin hash() here — it is randomized per process
         # (PYTHONHASHSEED) and would break id determinism across resume runs.
         # Use a stable digest-derived offset.
@@ -79,9 +79,9 @@ class SeedDrivenStrategy(PlanExecuteStrategy):
                 mutation["prompt"].replace("{value}", str(value))
         user = (f"{shot}\n\nTask: {task.get(op, task['fewshot'])}{extra}\n"
                 'Return JSON: {"instruction": "...", "output": "..."}')
-        obj = extract_json_object(await ctx.chat(
-            [{"role": "system", "content": "You are a careful data augmenter."},
-             {"role": "user", "content": user}]))
+        obj = await self._safe(ctx,
+                               [{"role": "system", "content": "You are a careful data augmenter."},
+                                {"role": "user", "content": user}])
         if not obj or not obj.get("instruction"):
             return None
         return self.make_sample(spec, instruction=str(obj["instruction"]),

@@ -2,7 +2,6 @@
 / openai, plus `<think>` rendering for reasoning."""
 from __future__ import annotations
 
-from typing import Any, Optional
 
 from corpuslab.core.sample import Sample
 

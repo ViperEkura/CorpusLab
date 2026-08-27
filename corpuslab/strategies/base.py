@@ -4,7 +4,10 @@
 - ids are derived at Plan time (docs/checkpoint-design.md §3) — "already
   finished?" is decidable before spending money;
 - `_safe` bundles "call + parse": JSON parse failures get the same retry
-  path as network failures;
+  path as network failures (§7) — the sole primitive retry_with_backoff
+  applies to both;
+- a tripped circuit breaker aborts the whole run (exit 3), it must not be
+  swallowed as a per-sample drop;
 - batch size is an engine-internal constant, never exposed as config
   (DESIGN §9.4).
 """
@@ -19,6 +22,7 @@ import asyncio
 from typing import Any, AsyncIterator, List, Optional
 
 from corpuslab.core.sample import Sample, TaskSpec
+from corpuslab.llm.client import CircuitBreakerOpen, chat_json
 
 EXECUTE_BATCH = 8                    # engine-internal constant (not config)
 
@@ -29,7 +33,6 @@ class PlanExecuteStrategy:
     def __init__(self, cfg: Any):
         self.cfg = cfg
 
-    # ── Plan ──────────────────────────────────────────────
     async def plan(self, materials: AsyncIterator[Any], budget: int,
                    ctx: Any) -> AsyncIterator[TaskSpec]:
         async for spec in self._plan(materials, budget, ctx):
@@ -41,7 +44,8 @@ class PlanExecuteStrategy:
                     ctx: Any) -> AsyncIterator[TaskSpec]:
         raise NotImplementedError
 
-    # ── Execute ───────────────────────────────────────────
+    # Execute: gather outcomes per fixed-size batch, then resolve after all
+    # plans land (breakers must abort, parse failures drop).
     async def execute(self, specs: AsyncIterator[TaskSpec],
                       ctx: Any) -> AsyncIterator[Sample]:
         batch: List[TaskSpec] = []
@@ -67,6 +71,8 @@ class PlanExecuteStrategy:
 
         for spec, res in results:
             if isinstance(res, BaseException):
+                if isinstance(res, CircuitBreakerOpen):
+                    raise res                     # breaker trips → abort run (exit 3)
                 # Record execute failures as terminal drops in the store too —
                 # otherwise the id is neither committed nor dropped and resume
                 # would re-spend LLM calls on it.
@@ -81,7 +87,13 @@ class PlanExecuteStrategy:
     async def _execute_one(self, spec: TaskSpec, ctx: Any) -> Optional[Sample]:
         raise NotImplementedError
 
-    # ── Helpers ───────────────────────────────────────────
+    # Unified "call + parse" helper: one retry path for both.
+    async def _safe(self, ctx: Any, messages: list, *,
+                    endpoint: Optional[str] = None,
+                    params: Optional[dict] = None):
+        return await chat_json(ctx, messages, endpoint=endpoint, params=params)
+
+    # Helpers
     def phases_params(self, phase: str, ctx: Any) -> dict:
         base = dict(ctx.cfg.llm.params or {})
         base.update((getattr(self.cfg, "phases", None) or {}).get(phase) or {})

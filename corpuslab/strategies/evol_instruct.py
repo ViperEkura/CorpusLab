@@ -5,10 +5,8 @@ from __future__ import annotations
 import random
 from typing import Any, AsyncIterator, List
 
-from corpuslab.config.loader import extract_json_object
 from corpuslab.core.registry import register_strategy
 from corpuslab.core.sample import Sample, TaskSpec, derive_id
-from corpuslab.sources import load_seeds
 from corpuslab.strategies.base import PlanExecuteStrategy
 
 
@@ -18,7 +16,9 @@ class EvolInstructStrategy(PlanExecuteStrategy):
 
     async def _plan(self, materials: AsyncIterator[Any], budget: int,
                     ctx: Any) -> AsyncIterator[TaskSpec]:
-        seeds = load_seeds(self.cfg.seed_file, self.cfg.field_map)
+        seeds = [m async for m in materials]      # SeedSource stream (§5.1)
+        if not seeds:
+            raise ValueError("seed source yielded no seeds")
         rng = random.Random((ctx.cfg.run.seed or 0) + 7)
         # Seeds → round-by-round evolution; one deterministic id per round:
         # evol:{seed}:r{round}:{k}
@@ -85,14 +85,14 @@ class EvolInstructStrategy(PlanExecuteStrategy):
         p = spec.payload
         old = p["instruction"]
         mut = p["mutation"]
-        evolved_obj = extract_json_object(await ctx.chat(
+        evolved_obj = await self._safe(ctx,
             [{"role": "system", "content": "You evolve instructions to be harder "
                                            "and more specific. Return JSON only."},
              {"role": "user", "content":
               f"Original instruction: {old}\n"
               f"Evolution operator [{mut['name']}]: {mut['prompt']}\n"
               'Return JSON: {"instruction": "..."}'}],
-            params=self.phases_params("evolve", ctx)))
+            params=self.phases_params("evolve", ctx))
         if not evolved_obj or not evolved_obj.get("instruction"):
             return None
         new_instr = str(evolved_obj["instruction"])
@@ -105,10 +105,10 @@ class EvolInstructStrategy(PlanExecuteStrategy):
         reasoning = ""
         output = ""
         if p.get("answer"):
-            ans_obj = extract_json_object(await ctx.chat(
+            ans_obj = await self._safe(ctx,
                 [{"role": "system", "content": "You answer the instruction well."},
                  {"role": "user", "content": new_instr}],
-                params=self.phases_params("answer", ctx)))
+                params=self.phases_params("answer", ctx))
             if ans_obj:
                 output = str(ans_obj.get("output") or ans_obj.get("answer") or "")
                 reasoning = str(ans_obj.get("reasoning") or "")

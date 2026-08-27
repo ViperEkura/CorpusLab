@@ -15,6 +15,9 @@ from typing import Optional
 from corpuslab import engine
 from corpuslab.config import validate as vld
 from corpuslab.config.loader import ConfigError, load
+from corpuslab.core.checkpoint import IncompatibleState
+from corpuslab.core.registry import import_builtin_modules
+from corpuslab.llm.client import CircuitBreakerOpen
 
 EXIT_OK = 0
 EXIT_CONFIG = 2
@@ -122,7 +125,6 @@ def main(argv: Optional[list] = None) -> int:
             print(f"--field-map is not valid JSON: {e}", file=sys.stderr)
             return EXIT_CONFIG
 
-    from corpuslab.core.registry import import_builtin_modules
     import_builtin_modules()
 
     try:
@@ -138,15 +140,19 @@ def main(argv: Optional[list] = None) -> int:
         else:
             report = asyncio.run(engine.score_flow(
                 cfg, args.input, args.output, args.input_format, field_map))
-    except engine.CircuitBreakerOpen:
+    except CircuitBreakerOpen:
         print("run aborted: circuit breaker open (state store retained)",
               file=sys.stderr)
         return EXIT_BREAKER
+    except IncompatibleState as e:
+        print(f"state store incompatible: {e}", file=sys.stderr)
+        return EXIT_CONFIG
     except ConfigError as e:
         print(f"config error: {e}", file=sys.stderr)
         return EXIT_CONFIG
 
-    print(report.summary())
+    from corpuslab.sinks.report import format_summary
+    print(format_summary(report))
     return EXIT_OK
 
 

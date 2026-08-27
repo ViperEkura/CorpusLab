@@ -9,12 +9,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Optional
 
 import yaml
 from pydantic import ValidationError
 
 from corpuslab.config import schema as S
+from corpuslab.llm.endpoints import env_fallback_llm, merge_endpoint
 
 # Alias hints at top level (not legal keys; migration suggestions only)
 _TOP_ALIASES = {"random_seed": "run.seed", "dry_run": "run.preview", "count": "plan.count",
@@ -86,36 +87,14 @@ def load(path: str) -> S.Config:
 
 
 def resolve_endpoint(cfg: S.Config, name: Optional[str]) -> S.LlmCfg:
-    """§10.1: fields not declared in endpoints.<name> inherit from llm
-    field-by-field (never a whole-section replace)."""
-    base = cfg.llm
-    if name and name != "llm" and name in cfg.endpoints:
-        diff = cfg.endpoints[name]
-        merged = base.model_copy(update={
-            "model": diff.model or base.model,
-            "api_key": diff.api_key or base.api_key,
-            "base_url": diff.base_url or base.base_url,
-            "lang": diff.lang or base.lang,
-            "concurrency": diff.concurrency,
-            "params": {**base.params, **diff.params},
-            "retry": diff.retry,
-            "breaker": diff.breaker,
-        })
-        return merged
-    return base
+    """§10.1 endpoint merge — normative implementation lives in
+    corpuslab.llm.endpoints; kept here as a thin alias."""
+    return merge_endpoint(cfg, name)
 
 
 def env_resolve_endpoint(ep: S.LlmCfg) -> S.LlmCfg:
-    """§10.4 env fallback (explicit value wins). Embedding never falls back to
-    llm credentials (avoids leaking keys to a third-party endpoint)."""
-    kw = {}
-    if not ep.api_key:
-        kw["api_key"] = os.environ.get("API_KEY")
-    if not ep.base_url:
-        kw["base_url"] = os.environ.get("BASE_URL")
-    if kw:
-        return ep.model_copy(update=kw)
-    return ep
+    """§10.4 env fallback — see corpuslab.llm.endpoints."""
+    return env_fallback_llm(ep)
 
 
 def env_resolve_embedding(cfg: S.Config) -> S.EmbeddingCfg:

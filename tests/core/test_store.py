@@ -1,7 +1,6 @@
 """Store tests: transaction atomicity, idempotent upserts, cleanup tiers."""
 from __future__ import annotations
 
-import json
 
 import pytest
 

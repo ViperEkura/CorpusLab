@@ -11,17 +11,22 @@ import os
 from typing import Any, AsyncIterator, Optional
 
 from corpuslab.config import schema as S
+from corpuslab.config.loader import (derive_format, env_resolve_embedding,
+                                     layout_for_path, output_layout)
 from corpuslab.core import checkpoint, planner
 from corpuslab.core.context import RunContext
 from corpuslab.core.pipeline import Pipeline
 from corpuslab.core.registry import lookup
 from corpuslab.core.sample import Sample
 from corpuslab.core.store import Store
+from corpuslab.embedding.client import HttpEmbeddingClient
 from corpuslab.judges.aggregate import AggregateJudge
 from corpuslab.judges.llm_judge import LLMJudge
-from corpuslab.llm.client import CircuitBreakerOpen, HttpLLMClient
+from corpuslab.judges.local import FastTextScorer
+from corpuslab.llm.client import HttpLLMClient
 from corpuslab.sinks.duckdb_sink import DuckDBSink
 from corpuslab.sinks.jsonl_sink import JsonlSink
+from corpuslab.sources.file import FileSource
 
 log = logging.getLogger("corpuslab.engine")
 
@@ -37,7 +42,6 @@ def _make_embedding(cfg: S.Config, store, ctx):
     if os.environ.get("CORPUSLAB_FAKE_EMBED"):
         from corpuslab.testing import FakeEmbedding
         return FakeEmbedding()
-    from corpuslab.config.loader import env_resolve_embedding
     return HttpEmbeddingClient(env_resolve_embedding(cfg), store=store, ctx=ctx)
 
 
@@ -64,7 +68,6 @@ def build_judge(cfg: S.Config) -> Optional[AggregateJudge]:
     scorers = []
     for sc in cfg.judge.scorers:
         if sc.type == "fasttext":
-            from corpuslab.judges.local import FastTextScorer
             scorers.append(FastTextScorer(sc))
         else:
             raise ValueError(f"unknown scorer type: {sc.type}")
@@ -88,16 +91,35 @@ def _minhash_meta(cfg: S.Config) -> list:
             for s in cfg.pipeline if s.type == "minhash_dedup"]
 
 
+def _source_for(scfg: Any):
+    """The declared material source for a strategy (§3.3). Concept sources
+    read topics; sample sources read seeds; document sources read documents;
+    spec sources read tools."""
+    from corpuslab.sources import (DocumentSource, SeedSource, TopicSource,
+                                   ToolSource)
+    t = scfg.type
+    if t in ("topic_driven", "deep_thinking"):
+        return TopicSource(scfg)
+    if t in ("seed_driven", "evol_instruct"):
+        return SeedSource(scfg.seed_file, scfg.field_map)
+    if t == "document_qa":
+        return DocumentSource(scfg.document_file, scfg.field_map)
+    if t == "instruction_backtranslation":
+        return DocumentSource(scfg.document_file, scfg.field_map)
+    if t == "tool_call":
+        return ToolSource(scfg.tools)
+    raise ValueError(f"no known material source for strategy {t!r}")
+
+
 async def _strategy_streams(cfg: S.Config, ctx: RunContext,
                             allocations: list) -> AsyncIterator[Sample]:
     """Every strategy's execute feeds one merged stream (single global
-    pipeline: cross-strategy dedup state is shared)."""
+    pipeline: cross-strategy dedup state is shared). Control flow follows
+    project-structure.md §5.1: source.open → strategy.plan → execute."""
     async def _one(scfg, budget: int):
+        src = _source_for(scfg)
         strategy = lookup("strategies", scfg.type)(scfg)
-        async def noop():
-            if False:                          # pragma: no cover
-                yield None
-        specs = strategy.plan(noop(), budget, ctx)
+        specs = strategy.plan(src.open(cfg, ctx), budget, ctx)
         async for s in strategy.execute(specs, ctx):
             yield s
     gens = [_one(scfg, budget) for scfg, budget in allocations]
@@ -137,9 +159,20 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
     allocations = planner.allocate(cfg.strategies, cfg.plan.count,
                                    cli_count=cli_count, only=only)
     if preview:
-        allocations = [(c, min(n, cfg.run.preview_count)) for c, n in allocations]
+        # Preview keeps the total at preview_count: scale every share so the
+        # sum matches run.preview_count (not N x preview_count).
+        total_alloc = sum(n for _, n in allocations)
+        pc = cfg.run.preview_count
+        scaled = []
+        for c, n in allocations:
+            k = round(n * pc / max(total_alloc, 1)) if total_alloc else 0
+            scaled.append((c, max(min(n, 1), k)))
+        rest = pc - sum(k for _, k in scaled)
+        if rest and scaled:
+            i = max(range(len(scaled)), key=lambda j: scaled[j][1])
+            scaled[i] = (scaled[i][0], scaled[i][1] + rest)
+        allocations = scaled
 
-    from corpuslab.config.loader import output_layout
     layout = output_layout(cfg)
     store = None if preview else Store(layout["db_path"], cfg.output.storage.table)
     ctx = RunContext(cfg, store=store, llm=_make_llm(cfg), preview=preview)
@@ -147,7 +180,7 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
     if needs_embedding(cfg):
         ctx.embedding = _make_embedding(cfg, store, ctx)
 
-    # ── resume reconciliation ─────────────────────────────
+    # resume reconciliation
     if store is not None and resume:
         recovered = checkpoint.restore(store, ctx)
         ctx.terminal = recovered["terminal"]
@@ -156,20 +189,19 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
                  len(recovered["pending"]))
 
     if store is not None:
-        try:
-            checkpoint.write_manifest(store, cfg,
-                                      num_perm=(ctx._minhash_meta[0]["num_perm"]
-                                                if ctx._minhash_meta else None),
-                                      embedding_model=(cfg.embedding.model
-                                                       if needs_embedding(cfg) else None),
-                                      discard=discard_state)
-        except checkpoint.IncompatibleState:
-            raise
+        # Manifest compatibility gate (checkpoint-design.md §7): refuses on
+        # version/config/seed drift unless --discard-state; drops only the
+        # affected state (sigs/embeddings) for parameter drift.
+        checkpoint.write_manifest(store, cfg,
+                                  num_perm=(ctx._minhash_meta[0]["num_perm"]
+                                            if ctx._minhash_meta else None),
+                                  embedding_model=(cfg.embedding.model
+                                                   if needs_embedding(cfg) else None),
+                                  discard=discard_state)
 
     pipeline = build_pipeline(cfg)
     judge = build_judge(cfg)
     thinking = cfg.output.thinking
-    from corpuslab.config.loader import derive_format
     fmt_out = derive_format(cfg)
 
     async def _scored() -> AsyncIterator[Sample]:
@@ -213,9 +245,6 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
 async def clean_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
                      input_format: str = "flat", field_map: Optional[dict] = None,
                      resume: bool = False) -> Any:
-    from corpuslab.config.loader import derive_format, layout_for_path
-    from corpuslab.sources.file import FileSource
-
     src = FileSource(input_path, input_format, field_map)
     storage = cfg.output.storage if cfg.output else None
     out_cfg = output_path or (cfg.output.path if cfg.output else "./cleaned")
@@ -249,9 +278,6 @@ async def clean_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
 
 async def score_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
                      input_format: str = "flat", field_map: Optional[dict] = None) -> Any:
-    from corpuslab.config.loader import derive_format, layout_for_path
-    from corpuslab.sources.file import FileSource
-
     src = FileSource(input_path, input_format, field_map)
     storage = cfg.output.storage if cfg.output else None
     out_cfg = output_path or (cfg.output.path if cfg.output else "./scored")

@@ -2,7 +2,6 @@
 via the shared llm/client path; results cached per endpoint in the store)."""
 from __future__ import annotations
 
-import statistics
 from typing import Any, List, Optional
 
 from corpuslab.config.loader import extract_json_object

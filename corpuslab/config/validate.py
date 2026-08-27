@@ -22,12 +22,12 @@ def check(cfg: S.Config, subcommand: str = "run",
     def warn(m):
         issues.append(("warning", m))
 
-    # ── Endpoint requirements ─────────────────────────────
+    # Endpoint requirements
     needs_llm = subcommand in ("run", "score")
     if needs_llm and not cfg.llm.model:
         err("llm.model is required (a model name is needed even with env vars)")
 
-    # ── Endpoint references ───────────────────────────────
+    # Endpoint references
     refs = []
     if cfg.judge.endpoint:
         refs.append(cfg.judge.endpoint)
@@ -38,7 +38,7 @@ def check(cfg: S.Config, subcommand: str = "run",
     if cfg.judge.judges and cfg.judge.endpoint:
         warn("when judges is non-empty it takes precedence; judge.endpoint is ignored")
 
-    # ── Per-subcommand required fields ────────────────────
+    # Per-subcommand required fields
     if subcommand == "run":
         if not cfg.strategies:
             err("run requires strategies (at least 1)")
@@ -63,7 +63,7 @@ def check(cfg: S.Config, subcommand: str = "run",
         if not cfg.judge.dimensions and not cfg.judge.scorers:
             err("score requires judge.dimensions (or non-empty scorers)")
 
-    # ── Pipeline chain legality ───────────────────────────
+    # Pipeline chain legality
     if not cfg.pipeline:
         warn("pipeline is empty: no governance will run")
     saw_batch = False
@@ -80,7 +80,7 @@ def check(cfg: S.Config, subcommand: str = "run",
         warn("semantic_dedup/cluster_dedup need an embedding endpoint "
              "(embedding.base_url or $EMBEDDING_BASE_URL)")
 
-    # ── Judge dimension sanity ────────────────────────────
+    # Judge dimension sanity
     if cfg.judge.dimensions:
         smax = sum(d.max for d in cfg.judge.dimensions)
         if smax > 0 and cfg.judge.min_total > 0:
@@ -97,7 +97,7 @@ def check(cfg: S.Config, subcommand: str = "run",
         if cfg.judge.max_disagreement and not cfg.judge.judges:
             warn("max_disagreement only matters with multiple judges")
 
-    # ── Resource existence ────────────────────────────────
+    # Resource existence
     def _exists(p: Optional[str], what: str):
         if p and not os.path.exists(p):
             err(f"{what} does not exist: {p}")
@@ -113,7 +113,7 @@ def check(cfg: S.Config, subcommand: str = "run",
     if input_path:
         _exists(input_path, "input")
 
-    # ── Output and storage ────────────────────────────────
+    # Output and storage
     if cfg.output is not None and cfg.output.storage.type == "jsonl":
         warn("storage.type=jsonl is the legacy plain-file mode: no resume "
              "checkpointing (the DuckDB mode is the full state store)")

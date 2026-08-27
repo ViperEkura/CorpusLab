@@ -2,11 +2,9 @@
 duplicate samples after interruption), manifest compatibility."""
 from __future__ import annotations
 
-import json
 
 import pytest
 
-from corpuslab.config.loader import load as load_config
 from corpuslab.core import checkpoint
 from corpuslab import engine
 from corpuslab.core.store import Store
@@ -21,10 +19,10 @@ async def test_run_then_resume_is_idempotent(tmp_path):
     cfg.plan.count = 6
     cfg.judge.min_total = 0                         # keep everything scoreable
 
-    report1 = await engine.run_flow(cfg, resume=False)
+    await engine.run_flow(cfg, resume=False)
     store = Store(str(tmp_path / "out.duckdb"))
     n1 = store.sample_count()
-    dropped1 = {r[0] for r in store.read_dropped()}
+    store.read_dropped()
     terminal1 = store.terminal_ids()
     store.close()
 
@@ -61,7 +59,7 @@ async def test_partial_state_resume_no_duplicates(tmp_path):
     store.close()
 
     # Resume with the full budget: no duplicates of already-committed samples
-    report = await engine.run_flow(cfg, resume=True)
+    await engine.run_flow(cfg, resume=True)
     store = Store(str(tmp_path / "out.duckdb"))
     ids = store.conn.execute("SELECT id FROM samples").fetchall()
     flat = [i[0] for i in ids]

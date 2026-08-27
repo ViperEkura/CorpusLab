@@ -23,7 +23,6 @@ def test_weight_split_with_remainder(tmp_path):
 def test_weights_auto_normalized(tmp_path):
     cfg = make_config(tmp_path)
     # weights 0.5/0.5 sum to 1; now try with a config where they don't
-    import yaml
     strategies = [
         {"type": "topic_driven", "weight": 2, "topics": [{"topic": "t1"}]},
         {"type": "seed_driven", "weight": 1, "seed_file": "x"},

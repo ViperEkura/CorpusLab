@@ -80,7 +80,7 @@ class Store:
         except Exception:
             pass
 
-    # ── Transactions ──────────────────────────────────────
+    # Transactions
     @contextmanager
     def transaction(self) -> Iterator[None]:
         self.conn.execute("BEGIN")
@@ -92,7 +92,7 @@ class Store:
         else:
             self.conn.execute("COMMIT")
 
-    # ── Event audit log ───────────────────────────────────
+    # Event audit log
     def event(self, t: str, sid: str = "", strategy: str = "",
               data: Optional[dict] = None) -> None:
         self._seq += 1
@@ -101,7 +101,7 @@ class Store:
             [self._seq, t, sid, strategy,
              json.dumps(data or {}, ensure_ascii=False)])
 
-    # ── Manifest (kv) ─────────────────────────────────────
+    # Manifest (kv)
     def set_kv(self, k: str, v: str) -> None:
         with self.transaction():
             self.conn.execute("DELETE FROM kv WHERE k=?", [k])
@@ -115,7 +115,7 @@ class Store:
         rows = self.conn.execute("SELECT k, v FROM kv").fetchall()
         return dict(rows)
 
-    # ── planned (Plan products, idempotent) ───────────────
+    # planned (Plan products, idempotent)
     def mark_planned(self, spec: TaskSpec) -> None:
         with self.transaction():
             self.conn.execute(
@@ -128,7 +128,7 @@ class Store:
         rows = self.conn.execute("SELECT id FROM planned").fetchall()
         return {r[0] for r in rows}
 
-    # ── Terminal sets ─────────────────────────────────────
+    # Terminal sets
     def sample_ids(self) -> set:
         rows = self.conn.execute(f"SELECT id FROM {self.table}").fetchall()
         return {r[0] for r in rows}
@@ -141,7 +141,7 @@ class Store:
         """samples ∪ dropped — the "already finished" set (resume skip list)."""
         return self.sample_ids() | self.dropped_ids()
 
-    # ── pending (batch-barrier disk backpressure) ─────────
+    # pending (batch-barrier disk backpressure)
     def save_pending(self, sample: Sample) -> None:
         with self.transaction():
             self.conn.execute(
@@ -164,7 +164,7 @@ class Store:
                     f"DELETE FROM pending WHERE id IN ({','.join('?' * len(chunk))})",
                     chunk)
 
-    # ── Streaming dedup state ─────────────────────────────
+    # Streaming dedup state
     def has_fingerprint(self, fp: str) -> bool:
         return self.conn.execute(
             "SELECT 1 FROM fingerprints WHERE hash=?", [fp]).fetchone() is not None
@@ -189,7 +189,7 @@ class Store:
             "SELECT sample_id, sig FROM minhash_sigs").fetchall()
         return [(r[0], json.loads(r[1])) for r in rows]
 
-    # ── Score cache (per endpoint; partial judge results survive too) ──
+    # Score cache (per endpoint; partial judge results survive too)
     def save_score(self, sid: str, endpoint: str, scores: dict, total: float) -> None:
         with self.transaction():
             self.conn.execute(
@@ -204,7 +204,7 @@ class Store:
             return None
         return {"scores": json.loads(row[0]), "total": row[1]}
 
-    # ── Embedding content-addressed cache ─────────────────
+    # Embedding content-addressed cache
     def load_embeddings(self, text_hashes: list, model: str) -> dict:
         if not text_hashes:
             return {}
@@ -227,7 +227,7 @@ class Store:
                 self.conn.execute(
                     "INSERT OR REPLACE INTO embeddings VALUES (?, ?, ?)", [h, m, list(v)])
 
-    # ── Terminal writes ───────────────────────────────────
+    # Terminal writes
     def commit_sample(self, sample: Sample, rendered: dict,
                       total_score: float = 0.0) -> None:
         """Transaction: projection + committed event + pending cleanup (atomic)."""
@@ -253,7 +253,7 @@ class Store:
             self.event("dropped", sid, strategy, {"stage": stage, "reason": reason})
             self.conn.execute("DELETE FROM pending WHERE id=?", [sid])
 
-    # ── Reading the projection ────────────────────────────
+    # Reading the projection
     def read_samples(self) -> list:
         rows = self.conn.execute(
             f"SELECT payload FROM {self.table} ORDER BY created_at, id").fetchall()
@@ -284,7 +284,7 @@ class Store:
                 ORDER BY created_at, id
             ) TO ? (FORMAT PARQUET)""", [path])
         return self.conn.execute(
-            f"SELECT count(*) FROM read_parquet(?)", [path]).fetchone()[0]
+            "SELECT count(*) FROM read_parquet(?)", [path]).fetchone()[0]
 
     def sample_count(self) -> int:
         return self.conn.execute(f"SELECT count(*) FROM {self.table}").fetchone()[0]
@@ -293,7 +293,7 @@ class Store:
         return self.conn.execute(
             "SELECT id, strategy, stage, reason FROM dropped").fetchall()
 
-    # ── Cleanup ───────────────────────────────────────────
+    # Cleanup
     def cache_cleanup(self) -> None:
         """On success, clear only transient tables (audit events, in-flight
         pending). Terminal sets and dedup state persist so later runs are

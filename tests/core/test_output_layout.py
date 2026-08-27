@@ -7,7 +7,7 @@ import json
 import pytest
 
 from corpuslab.config import schema as S
-from corpuslab.config.loader import layout_for_path, output_layout
+from corpuslab.config.loader import layout_for_path
 from corpuslab import engine
 from corpuslab.core.store import Store
 from tests.conftest import make_config
@@ -73,7 +73,7 @@ async def test_dir_mode_jsonl_export(tmp_path):
     await engine.run_flow(cfg)
     path = out / "rows.jsonl"
     assert path.exists()
-    lines = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
+    lines = [json.loads(ln) for ln in path.read_text(encoding="utf-8").splitlines()]
     assert len(lines) > 0
     assert "instruction" in lines[0]
 

@@ -10,7 +10,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from corpuslab.config.loader import load as load_config  # noqa: E402
-from corpuslab.core.sample import Sample, TaskSpec, derive_id  # noqa: E402
+from corpuslab.core.sample import Sample, derive_id  # noqa: E402
 from corpuslab.testing import FakeEmbedding, FakeLLM  # noqa: E402
 
 
@@ -41,7 +41,7 @@ def make_sample(n: int, *, instruction: str = None, output: str = None,
 
 
 def make_config(tmp_path, *, strategies_yaml=None, pipeline_yaml=None,
-                judge_yaml=None, extra_yaml="", output_path=None) -> "S.Config":
+                judge_yaml=None, extra_yaml="", output_path=None):
     from corpuslab.config import schema as S  # noqa: F401
     import yaml
 

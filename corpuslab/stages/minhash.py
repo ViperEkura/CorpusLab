@@ -7,6 +7,8 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
+from datasketch import MinHash, MinHashLSH
+
 from corpuslab.core.registry import register_stage
 from corpuslab.core.sample import Sample
 
@@ -21,15 +23,13 @@ class MinHashDedupStage:
     type = "minhash_dedup"
 
     def __init__(self, cfg: Any):
-        from datasketch import MinHash, MinHashLSH
         self.threshold = cfg.threshold
         self.num_perm = cfg.num_perm
         self.ngram_n = cfg.ngram_n
-        self._MinHash = MinHash
         self.lsh = MinHashLSH(threshold=cfg.threshold, num_perm=cfg.num_perm)
 
     def _sig_for(self, text: str):
-        m = self._MinHash(num_perm=self.num_perm)
+        m = MinHash(num_perm=self.num_perm)
         for g in _ngrams(text, self.ngram_n):
             m.update(g.encode("utf-8"))
         return m

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import pytest
 
-from corpuslab.config.loader import load
 from corpuslab.core.context import RunContext
 from corpuslab.core.pipeline import Pipeline
 from corpuslab.core.registry import import_builtin_modules, lookup

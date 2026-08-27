@@ -48,6 +48,8 @@ corpuslab/                          # 仓库根
 │   ├── __init__.py
 │   ├── cli.py                      # 入口：run/clean/score/validate
 │   ├── __main__.py                 # 支持 python -m corpuslab 等价启动
+│   ├── engine.py                   # 装配与编排：按配置构建流水线，跑四个子命令流
+│   ├── testing.py                  # FakeLLM / FakeEmbedding（经 CORPUSLAB_FAKE_* 注入）
 │   ├── config/
 │   ├── core/
 │   ├── sources/

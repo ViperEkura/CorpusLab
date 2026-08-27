@@ -5,10 +5,9 @@ from __future__ import annotations
 import random
 from typing import Any, AsyncIterator
 
-from corpuslab.config.loader import extract_json_object
 from corpuslab.core.registry import register_strategy
 from corpuslab.core.sample import TaskSpec, derive_id
-from corpuslab.sources import load_documents, normalize_text
+from corpuslab.sources.documents import normalize_text
 from corpuslab.strategies.base import PlanExecuteStrategy
 
 _CTX_REFS = ("根据上文", "根据给定文档", "如上文所述", "as mentioned above",
@@ -21,7 +20,9 @@ class BacktranslationStrategy(PlanExecuteStrategy):
 
     async def _plan(self, materials: AsyncIterator[Any], budget: int,
                     ctx: Any) -> AsyncIterator[TaskSpec]:
-        docs = load_documents(self.cfg.document_file, self.cfg.field_map)
+        docs = [m async for m in materials]       # DocumentSource stream (§5.1)
+        if not docs:
+            raise ValueError("document source yielded no documents")
         if self.cfg.shuffle:
             rng = random.Random(ctx.cfg.run.seed or 0)
             rng.shuffle(docs)
@@ -44,14 +45,14 @@ class BacktranslationStrategy(PlanExecuteStrategy):
 
     async def _execute_one(self, spec: TaskSpec, ctx: Any):
         text = spec.payload["text"]
-        obj = extract_json_object(await ctx.chat(
+        obj = await self._safe(ctx,
             [{"role": "system",
               "content": "You infer the instruction that the given text answers. "
                          "The instruction must be self-contained. Return JSON only."},
              {"role": "user",
               "content": f"Text:\n{text}\n\n"
                          'Return JSON: {"instruction": "..."}'}],
-            params=self.phases_params("backtranslate", ctx)))
+            params=self.phases_params("backtranslate", ctx))
         if not obj or not obj.get("instruction"):
             return None
         instr = str(obj["instruction"])

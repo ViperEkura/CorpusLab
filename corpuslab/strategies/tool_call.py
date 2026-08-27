@@ -6,7 +6,6 @@ from __future__ import annotations
 import json
 from typing import Any, AsyncIterator
 
-from corpuslab.config.loader import extract_json_object
 from corpuslab.core.registry import register_strategy
 from corpuslab.core.sample import TaskSpec, derive_id
 from corpuslab.strategies.base import PlanExecuteStrategy
@@ -58,6 +57,9 @@ class ToolCallStrategy(PlanExecuteStrategy):
 
     async def _plan(self, materials: AsyncIterator[Any], budget: int,
                     ctx: Any) -> AsyncIterator[TaskSpec]:
+        tools = [m async for m in materials]      # ToolSource stream (§5.1)
+        if not tools:
+            raise ValueError("tool source yielded no tools")
         for n in range(budget):
             topic = self.cfg.topics[n % len(self.cfg.topics)]
             sid = derive_id("tool", topic, n)
@@ -79,9 +81,9 @@ class ToolCallStrategy(PlanExecuteStrategy):
                 "\"tool_calls\": [{\"id\": \"call_1\", \"type\": \"function\", "
                 "\"function\": {\"name\": \"...\", \"arguments\": \"{...}\"}}], "
                 "\"tool_call_id\": \"...\"}], ...}")
-        obj = extract_json_object(await ctx.chat([
+        obj = await self._safe(ctx, [
             {"role": "system", "content": _SYS},
-            {"role": "user", "content": user}]))
+            {"role": "user", "content": user}])
         if not obj or not obj.get("messages"):
             return None
         messages = obj["messages"]

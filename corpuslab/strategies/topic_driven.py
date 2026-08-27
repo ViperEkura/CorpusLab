@@ -4,10 +4,8 @@ from __future__ import annotations
 import itertools
 from typing import Any, AsyncIterator
 
-from corpuslab.config.loader import extract_json_object
 from corpuslab.core.registry import register_strategy
 from corpuslab.core.sample import TaskSpec, derive_id
-from corpuslab.sources import load_topics
 from corpuslab.strategies.base import PlanExecuteStrategy
 
 LANG_HINT = {"zh": "Please answer in Chinese.", "en": "Answer in English."}
@@ -22,11 +20,12 @@ class TopicDrivenStrategy(PlanExecuteStrategy):
 
     async def _plan(self, materials: AsyncIterator[Any], budget: int,
                     ctx: Any) -> AsyncIterator[TaskSpec]:
-        topics = load_topics(self.cfg)
+        # TopicSource (§5.1 control flow) opened the material stream; consume it.
+        topics = [m async for m in materials]
+        if not topics:
+            raise ValueError("topic source yielded no topics")
         dims = [(d.name, d.vals) for d in self.cfg.dimensions if d.vals]
         combos = list(itertools.product(*[vals for _, vals in dims])) or [()]
-        # Concept sources do not consume external materials (topics are the
-        # material); the iterator is intentionally left unread.
         for n in range(budget):
             topic = topics[n % len(topics)]
             combo = combos[n % len(combos)]
@@ -47,9 +46,9 @@ class TopicDrivenStrategy(PlanExecuteStrategy):
                 + (f"Knowledge background: {knowledge}\n" if knowledge else "")
                 + f"{LANG_HINT.get(ctx.lang, '')}\n"
                 + 'Return JSON: {"instruction": "...", "output": "..."}')
-        obj = extract_json_object(await ctx.chat(
-            [{"role": "system", "content": _SYS},
-             {"role": "user", "content": user}]))
+        obj = await self._safe(ctx,
+                               [{"role": "system", "content": _SYS},
+                                {"role": "user", "content": user}])
         if not obj or not obj.get("instruction"):
             return None
         reasoning = str(obj.get("reasoning") or "") if self.cfg.require_reasoning else ""

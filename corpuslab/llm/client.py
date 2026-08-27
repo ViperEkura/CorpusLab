@@ -1,10 +1,18 @@
 """LLM client: the sole retry primitive retry_with_backoff, per-endpoint
 circuit breaker, per-endpoint semaphore (S4).
 
-OpenAI-compatible protocol over httpx; tests inject a FakeLLM through the
-same chat interface.
+OpenAI-compatible protocol over httpx on a pooled connection; tests inject a
+FakeLLM through the same chat interface.
 """
 from __future__ import annotations
+
+__all__ = [
+    "CircuitBreakerOpen",
+    "Breaker",
+    "retry_with_backoff",
+    "LLMClient",
+    "HttpLLMClient",
+]
 
 import asyncio
 import json
@@ -15,8 +23,9 @@ from typing import Any, Dict, Optional, Protocol
 
 import httpx
 
-from corpuslab.config.loader import env_resolve_endpoint, resolve_endpoint
-from corpuslab.config.schema import Config, LlmCfg
+from corpuslab.config.loader import extract_json_object
+from corpuslab.llm.endpoints import EndpointResolver
+from corpuslab.config.schema import LlmCfg
 
 log = logging.getLogger("corpuslab.llm")
 
@@ -28,8 +37,8 @@ class CircuitBreakerOpen(RuntimeError):
 
 
 class Breaker:
-    """Counted per endpoint (DESIGN §7.2: a judge endpoint's failure must not
-    abort generation)."""
+    """Counted per endpoint NAME (DESIGN §7.2: a judge endpoint's failure must
+    not abort generation; two endpoints sharing a model still count apart)."""
 
     def __init__(self, window: float, max_retry_ratio: float):
         self.window = window
@@ -81,42 +90,50 @@ class LLMClient(Protocol):
 
 
 class HttpLLMClient:
-    """Production implementation: per-endpoint semaphore + retry + breaker."""
+    """Production implementation: pooled httpx session, per-endpoint-name
+    semaphore + retry + breaker."""
 
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Any):
         self.cfg = cfg
-        self._resolved: Dict[str, LlmCfg] = {}
+        self.resolver = EndpointResolver(cfg)
+        self._sems: Dict[str, asyncio.Semaphore] = {}
+        self._breakers: Dict[str, Breaker] = {}
+        self._http: Optional[httpx.AsyncClient] = None   # created in-loop
 
     def endpoint_cfg(self, name: Optional[str]) -> LlmCfg:
-        key = name or "llm"
-        if key not in self._resolved:
-            self._resolved[key] = env_resolve_endpoint(resolve_endpoint(self.cfg, name))
-        return self._resolved[key]
+        return self.resolver.resolve(name).cfg
 
-    def _semaphore(self, ep: LlmCfg):
-        sems = getattr(self, "_sems", None)
-        if sems is None:
-            sems = self._sems = {}
-        # cache by endpoint name so merged endpoint configs share one lock
-        key = ep.model or "llm"
-        if key not in sems:
-            sems[key] = asyncio.Semaphore(max(ep.concurrency, 1))
-        return sems[key]
+    async def aclose(self) -> None:
+        if self._http is not None:
+            await self._http.aclose()
+            self._http = None
 
-    def _breaker(self, ep: LlmCfg) -> Breaker:
-        brs = getattr(self, "_breakers", None)
-        if brs is None:
-            brs = self._breakers = {}
-        key = ep.model or "llm"
-        if key not in brs:
-            brs[key] = Breaker(ep.breaker.window, ep.breaker.max_retry_ratio)
-        return brs[key]
+    def _session(self) -> httpx.AsyncClient:
+        if self._http is None:                    # lazy: needs a running loop
+            self._http = httpx.AsyncClient(timeout=120)
+        return self._http
+
+    def _semaphore(self, ep_name: str, cfg: LlmCfg) -> asyncio.Semaphore:
+        # keyed by endpoint name so concurrency contracts hold independently
+        # of model identity (§6: semaphores are held per endpoint)
+        if ep_name not in self._sems:
+            self._sems[ep_name] = asyncio.Semaphore(max(cfg.concurrency, 1))
+        return self._sems[ep_name]
+
+    def _breaker(self, ep_name: str, cfg: LlmCfg) -> Breaker:
+        # keyed by endpoint name (§6: breakers are counted per endpoint)
+        if ep_name not in self._breakers:
+            self._breakers[ep_name] = Breaker(cfg.breaker.window,
+                                              cfg.breaker.max_retry_ratio)
+        return self._breakers[ep_name]
 
     async def chat(self, messages: list, *, endpoint: Optional[str] = None,
                    params: Optional[dict] = None) -> str:
-        ep = self.endpoint_cfg(endpoint)
-        sem = self._semaphore(ep)
-        br = self._breaker(ep)
+        resolved = self.resolver.resolve(endpoint)
+        ep_name, ep = resolved.name, resolved.cfg
+        sem = self._semaphore(ep_name, ep)
+        br = self._breaker(ep_name, ep)
+        client = self._session()
 
         async def _once() -> str:
             br.check()
@@ -130,10 +147,9 @@ class HttpLLMClient:
             headers = {"Content-Type": "application/json"}
             if ep.api_key:
                 headers["Authorization"] = f"Bearer {ep.api_key}"
-            async with httpx.AsyncClient(timeout=120) as client:
-                r = await client.post(url, json=body, headers=headers)
-                r.raise_for_status()
-                data = r.json()
+            r = await client.post(url, json=body, headers=headers)
+            r.raise_for_status()
+            data = r.json()
             content = data["choices"][0]["message"]["content"]
             return content if isinstance(content, str) else json.dumps(content)
 
@@ -149,22 +165,30 @@ class HttpLLMClient:
 
 
 async def chat_json(ctx, messages: list, *, endpoint: Optional[str] = None,
-                    params: Optional[dict] = None) -> Optional[dict]:
-    """Wrap "call + parse" on one retry path: JSON parse failure gets the
-    same treatment as network failure."""
+                    params: Optional[dict] = None) -> dict | None:
+    """Wrap "call + parse" on ONE retry path (§7: parse failures take the
+    same backoff path as network failures). Backoff parameters come from the
+    endpoint config when resolvable, else global defaults."""
+    attempts, backoff, max_delay = 3, 2.0, 30.0
+    endpoint_cfg = getattr(getattr(ctx, "llm", None), "endpoint_cfg", None)
+    if endpoint_cfg is not None:
+        try:
+            rcfg = endpoint_cfg(endpoint)
+            attempts, backoff, max_delay = (rcfg.retry.attempts,
+                                            rcfg.retry.backoff,
+                                            rcfg.retry.max_delay)
+        except Exception:                        # pragma: no cover
+            pass
+
     async def _once():
         text = await ctx.chat(messages, endpoint=endpoint, params=params)
-        from corpuslab.config.loader import extract_json_object
         obj = extract_json_object(text)
         if obj is None:
             raise ValueError("no JSON object found in the LLM reply")
         return obj
 
     try:
-        return await _once()
+        return await retry_with_backoff(_once, attempts=attempts,
+                                        backoff=backoff, max_delay=max_delay)
     except ValueError:
-        # network-level retry already happened inside ctx.chat; retry the
-        # call once more for a parseable reply (simple and sufficient)
-        text = await ctx.chat(messages, endpoint=endpoint, params=params)
-        from corpuslab.config.loader import extract_json_object
-        return extract_json_object(text)
+        return None                              # exhausted → caller drops

@@ -17,7 +17,7 @@ __all__ = [
 import hashlib
 import json
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 def _sha256(text: str) -> str:
@@ -64,7 +64,7 @@ class Sample:
     tools: list = field(default_factory=list)
     metadata: dict = field(default_factory=dict)      # lineage / metrics
 
-    # ── Derived ───────────────────────────────────────────
+    # Derived
     @property
     def lineage(self) -> dict:
         return self.metadata.setdefault("lineage", {})
@@ -86,7 +86,7 @@ class Sample:
         """Stats/length scope (metadata excluded so lineage never skews statistics)."""
         return self.text_for_dedup()
 
-    # ── Validation (data-format.md §2.2) ──────────────────
+    # Validation (data-format.md §2.2)
     def validate(self, raise_on_error: bool = True) -> list:
         """Enforce the internal-format constraints (C1–C4). Returns the list
         of problems; raises ValueError when raise_on_error and any exist."""
@@ -112,7 +112,7 @@ class Sample:
                 f"invalid Sample {self.id!r}: " + "; ".join(problems))
         return problems
 
-    # ── Serialization ─────────────────────────────────────
+    # Serialization
     def to_dict(self) -> dict:
         d: dict[str, Any] = {
             "id": self.id,
@@ -181,6 +181,7 @@ class RunReport:
 
     produced: int = 0                    # samples that reached the Sink
     dropped: dict = field(default_factory=dict)    # {stage: {reason: n}}
+    totals: list = field(default_factory=list)     # total_score per scored sample
     llm_calls: int = 0
     retried: int = 0
     embed_calls: int = 0

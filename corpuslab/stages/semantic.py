@@ -7,6 +7,7 @@ in the store."""
 from __future__ import annotations
 
 import math
+import random
 from typing import Any, List
 
 from corpuslab.core.registry import register_stage
@@ -64,7 +65,6 @@ class ClusterDedupStage:
         vecs = await ctx.embed([s.text_for_dedup() for s in samples])
 
         # Greedy bucketing: bucket key = sign pattern of a few random projections
-        import random
         rng = random.Random(0)
         dims = len(vecs[0]) if vecs else 0
         k = min(8, max(dims, 1))

@@ -1,7 +1,6 @@
 """Public extension surface: __all__ whitelists (docs/project-structure.md §11)."""
 from __future__ import annotations
 
-import pytest
 
 
 def test_registry_star_import():

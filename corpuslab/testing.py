@@ -9,6 +9,7 @@ and dedup/judge behavior is observable without network access."""
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from typing import Optional
 
@@ -32,7 +33,6 @@ class FakeLLM:
 
         # Judge prompt: "Score the sample" → emit scores JSON
         if user.startswith("Score the sample"):
-            import json
             dims = {}
             seg = user.split("Dimensions: ", 1)
             if len(seg) == 2:
@@ -44,7 +44,6 @@ class FakeLLM:
             return json.dumps({"scores": dims})
 
         # Generation prompt: emit instruction/output keyed to the prompt
-        import json
         variety = h % 97
         vocab = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta",
                  "theta", "iota", "kappa", "lambda", "mu", "nu", "xi"]

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from corpuslab.config.loader import extract_json_object
 from corpuslab.core.registry import register_strategy
 from corpuslab.core.sample import TaskSpec
 from corpuslab.strategies.topic_driven import TopicDrivenStrategy, LANG_HINT
@@ -27,8 +26,9 @@ class DeepThinkingStrategy(TopicDrivenStrategy):
                 + f"{LANG_HINT.get(ctx.lang, '')}\n"
                 + 'Return JSON: {"instruction": "...", "reasoning": "...", '
                   '"output": "..."}')
-        obj = extract_json_object(await ctx.chat(
-            [{"role": "system", "content": _SYS}, {"role": "user", "content": user}]))
+        obj = await self._safe(ctx,
+                               [{"role": "system", "content": _SYS},
+                                {"role": "user", "content": user}])
         if not obj or not obj.get("instruction"):
             return None
         return self.make_sample(spec, instruction=str(obj["instruction"]),

@@ -28,7 +28,7 @@ class RunContext:
         # Populated by the engine before execution: terminal ids from resume
         self.terminal: set = set()
 
-    # ── Stage-decision helpers (drop and state land in one transaction) ──
+    # Stage-decision helpers (drop and state land in one transaction)
     def drop(self, sample: Sample, stage: str, reason: str) -> None:
         self.report.drop(stage, reason)
         if self.store is not None and not self.preview:
@@ -44,7 +44,7 @@ class RunContext:
         if self.store is not None and not self.preview:
             self.store.event(t, sid, strategy, data)
 
-    # ── LLM/embedding convenience entry points (may be fakes) ──
+    # LLM/embedding convenience entry points (may be fakes)
     async def chat(self, messages: list, *, endpoint: Optional[str] = None,
                    params: Optional[dict] = None) -> str:
         if self.llm is None:
@@ -60,7 +60,7 @@ class RunContext:
                 "embedding section)")
         return await self.embedding.embed(texts)
 
-    # ── Convenience: three-layer params merge for a phase ──
+    # Convenience: three-layer params merge for a phase
     def phase_params(self, base_params: dict, phases: dict, phase: str) -> dict:
         out = dict(base_params or {})
         out.update((phases or {}).get(phase) or {})

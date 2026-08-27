@@ -3,11 +3,9 @@ the idempotency foundation of the checkpoint (duplicate ids get silently
 swallowed by INSERT OR IGNORE and break resume exactness)."""
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 
-from corpuslab.config.loader import load as load_config
 from corpuslab.core.context import RunContext
 from corpuslab.core.registry import import_builtin_modules, lookup
 from tests.conftest import make_config
@@ -15,14 +13,15 @@ from tests.conftest import make_config
 import_builtin_modules()
 
 
+def _source_for(scfg):
+    from corpuslab.engine import _source_for
+    return _source_for(scfg)
+
+
 async def _collect_ids(strategy_cfg, budget, ctx):
     strat = lookup("strategies", strategy_cfg.type)(strategy_cfg)
-
-    async def noop():
-        if False:                              # pragma: no cover
-            yield None
-
-    return [s.id async for s in strat.plan(noop(), budget, ctx)]
+    src = _source_for(strategy_cfg)
+    return [s.id async for s in strat.plan(src.open(None, ctx), budget, ctx)]
 
 
 @pytest.mark.asyncio

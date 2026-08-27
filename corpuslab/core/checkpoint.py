@@ -5,6 +5,13 @@ from __future__ import annotations
 import hashlib
 from typing import Any, Optional
 
+import numpy as np
+from datasketch import MinHash, MinHashLSH
+
+from corpuslab.config.loader import dumps_state_relevant
+from corpuslab.core.sample import FORMAT_VERSION
+from corpuslab.core.store import SCHEMA_VERSION
+
 
 class IncompatibleState(Exception):
     def __init__(self, msg: str, discardable: Optional[list] = None):
@@ -15,14 +22,11 @@ class IncompatibleState(Exception):
 def config_fingerprint(cfg: Any) -> str:
     """Fingerprint of state-relevant config (plan/preview are excluded:
     changing them keeps resume compatible)."""
-    from corpuslab.config.loader import dumps_state_relevant
     return hashlib.sha256(dumps_state_relevant(cfg).encode()).hexdigest()[:16]
 
 
 def write_manifest(store: Any, cfg: Any, *, num_perm: Optional[int] = None,
                    embedding_model: Optional[str] = None, discard: bool = False) -> None:
-    from corpuslab.core.sample import FORMAT_VERSION
-    from corpuslab.core.store import SCHEMA_VERSION
     want = {
         "version": SCHEMA_VERSION,
         "format_version": FORMAT_VERSION,
@@ -79,9 +83,6 @@ def write_manifest(store: Any, cfg: Any, *, num_perm: Optional[int] = None,
 def restore(store: Any, ctx: Any) -> dict:
     """resume reconciliation: terminal sets + LSH index rebuild. Returns a
     recovery summary."""
-    import numpy as np
-    from datasketch import MinHash, MinHashLSH
-
     terminal = store.terminal_ids()
     planned = store.planned_ids()
 
@@ -94,7 +95,9 @@ def restore(store: Any, ctx: Any) -> dict:
         lsh = MinHashLSH(threshold=stage["threshold"], num_perm=num_perm)
         for sid, sig in store.load_sigs():
             m = MinHash(num_perm=num_perm)
-            m.hashvalues = np.array(sig, dtype=np.uint64)
+            # datasketch hashes are uint32 — a wider dtype breaks band
+            # hashing and makes every resume query miss
+            m.hashvalues = np.array(sig, dtype=np.uint32)
             try:
                 lsh.insert(sid, m)
             except ValueError:

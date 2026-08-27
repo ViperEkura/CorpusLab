@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any, AsyncIterator
 
-from corpuslab.config.loader import extract_json_object
 from corpuslab.core.registry import register_strategy
 from corpuslab.core.sample import TaskSpec, derive_id
-from corpuslab.sources import load_documents, semantic_chunks, structure_chunks
+from corpuslab.sources.chunking import semantic_chunks, structure_chunks
 from corpuslab.strategies.base import PlanExecuteStrategy
 
 _CTX_REFS = ("根据上文", "根据给定文档", "如上文所述", "as mentioned above",
@@ -20,7 +19,9 @@ class DocumentQAStrategy(PlanExecuteStrategy):
 
     async def _plan(self, materials: AsyncIterator[Any], budget: int,
                     ctx: Any) -> AsyncIterator[TaskSpec]:
-        docs = load_documents(self.cfg.document_file, self.cfg.field_map)
+        docs = [m async for m in materials]       # DocumentSource stream (§5.1)
+        if not docs:
+            raise ValueError("document source yielded no documents")
         ch = self.cfg.chunking
         n = 0
         for doc in docs:
@@ -47,14 +48,14 @@ class DocumentQAStrategy(PlanExecuteStrategy):
 
     async def _execute_one(self, spec: TaskSpec, ctx: Any):
         chunk = spec.payload["chunk"]
-        obj = extract_json_object(await ctx.chat(
+        obj = await self._safe(ctx,
             [{"role": "system",
               "content": "You write QA pairs grounded strictly in the given text. "
                          "The question must be self-contained (readable without "
                          "seeing the text)."},
              {"role": "user",
               "content": f"Source text:\n{chunk}\n\n"
-                         'Return JSON: {"instruction": "...", "output": "..."}'}]))
+                         'Return JSON: {"instruction": "...", "output": "..."}'}])
         if not obj or not obj.get("instruction"):
             return None
         instr = str(obj["instruction"])

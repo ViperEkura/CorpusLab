@@ -1,7 +1,6 @@
 """Internal data-format contract tests (docs/data-format.md §2)."""
 from __future__ import annotations
 
-import json
 
 import pytest
 

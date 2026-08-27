@@ -36,7 +36,7 @@ class AggregateJudge:
     async def score(self, sample: Sample, ctx: Any) -> Optional[Score]:
         dims = {d.name: d for d in self.cfg.dimensions}
 
-        # ── Fan out over remote judges ─────────────────────
+        # Fan out over remote judges
         per_dim: dict = {name: [] for name in dims}
         success = 0
         for judge in self.remote:
@@ -60,13 +60,13 @@ class AggregateJudge:
                     ctx.drop(sample, "judge", "judge_disagreement")
                     return None
 
-        # ── Aggregate remote scores per dimension ──────────
+        # Aggregate remote scores per dimension
         final: dict = {}
         for name, values in per_dim.items():
             if values:
                 final[name] = self._agg(values, self.cfg.aggregation)
 
-        # ── Local scorers fill in (or annotate) dimensions ──
+        # Local scorers fill in (or annotate) dimensions
         sources = ["llm"] if self.remote else []
         for scorer in self.scorers:
             sc = await scorer.score(sample, ctx)
@@ -86,6 +86,7 @@ class AggregateJudge:
             sample.metrics["scores"] = {k: round(v, 3) for k, v in final.items()}
             sample.metrics["total_score"] = round(total, 3)
             sample.metrics["score_source"] = "+".join(sources) or "none"
+            ctx.report.totals.append(total)
 
         # min_total gate
         if self.cfg.min_total and total < self.cfg.min_total:

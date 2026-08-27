@@ -21,7 +21,7 @@ __all__ = [
 
 import importlib
 import logging
-from typing import Callable, Dict
+from typing import Dict
 
 log = logging.getLogger("corpuslab.registry")
 

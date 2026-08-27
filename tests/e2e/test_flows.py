@@ -74,7 +74,7 @@ async def test_clean_over_jsonl(tmp_path):
 
     cfg = make_config(tmp_path)
     out = tmp_path / "cleaned.duckdb"
-    report = await engine.clean_flow(cfg, str(src), str(out), "alpaca")
+    await engine.clean_flow(cfg, str(src), str(out), "alpaca")
     store = Store(str(out))
     assert store.sample_count() > 0
     store.close()
@@ -91,7 +91,7 @@ async def test_score_over_cleaned_store(tmp_path):
     cfg2 = make_config(tmp_path)
     cfg2.plan.count = 4
     out2 = tmp_path / "scored.duckdb"
-    report = await engine.score_flow(cfg2, db, str(out2), "flat")
+    await engine.score_flow(cfg2, db, str(out2), "flat")
     store = Store(str(out2))
     assert store.sample_count() > 0
     for s in store.read_samples():
