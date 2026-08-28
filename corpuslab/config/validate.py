@@ -80,7 +80,10 @@ def check(cfg: S.Config, subcommand: str = "run",
         warn("semantic_dedup/cluster_dedup need an embedding endpoint "
              "(embedding.base_url or $EMBEDDING_BASE_URL)")
 
-    # Judge dimension sanity
+    # Judge configuration sanity
+    if (cfg.judge.judges or cfg.judge.endpoint) and not cfg.judge.dimensions:
+        warn("judge.judges/endpoint declared but judge.dimensions is empty: "
+             "remote judges will not run (only local scorers)")
     if cfg.judge.dimensions:
         smax = sum(d.max for d in cfg.judge.dimensions)
         if smax > 0 and cfg.judge.min_total > 0:

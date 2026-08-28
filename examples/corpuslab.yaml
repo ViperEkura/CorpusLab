@@ -79,4 +79,4 @@ output:
   storage:
     type: duckdb
     table: samples
-    export_jsonl: ./generated_sft.jsonl
+    export_format: jsonl        # parquet（默认）| jsonl | null（仅状态库）

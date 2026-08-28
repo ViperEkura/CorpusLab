@@ -179,7 +179,7 @@ pipeline:   [{type, ...}]                                        # 有序治理�
 judge:      {dimensions, min_total, judges, aggregation,
              min_judges, max_disagreement, scorers, perplexity}  # 双通道评审
 output:     {path, format, multi_turn, thinking, resume,
-             storage: {type, export_parquet, export_jsonl}}      # 落盘与导出
+              storage: {type, export_format}}         # 落盘与导出（parquet/jsonl/null）
 ```
 
 完整字段、解析规则（§10）与校验规则（§11）见 [docs/config-design.md](docs/config-design.md)。

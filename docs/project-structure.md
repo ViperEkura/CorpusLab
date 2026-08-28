@@ -43,6 +43,7 @@ corpuslab/                          # 仓库根
 ├── docs/
 │   ├── config-design.md           # 配置设计
 │   ├── checkpoint-design.md       # 检查点与状态库设计
+│   ├── data-format.md             # 内部数据格式（Sample/DuckDB 行格式）
 │   └── project-structure.md       # 本文
 ├── corpuslab/                      # 主包（平铺于仓库根）
 │   ├── __init__.py
@@ -144,6 +145,7 @@ corpuslab/                          # 仓库根
 |------|------|
 | `llm_judge.py` | LLM-as-Judge：维度提示构造、JSON 分数解析（走 `llm/client` 重试；结果入 `scores` 缓存） |
 | `local.py` | 本地 scorer：`fasttext`（可选 extra；未安装时引用报明确错误） |
+| `perplexity.py` | 困惑度 scorer：`teacher_forced`（prompt_logprobs 真 PPL）/ `continuation`（前缀+续写 NLL 代理）双模式，归一化 [0,1] 写入同名维度（配置见 config-design.md §8.1） |
 | `aggregate.py` | 多裁判聚合：语义见 README.md「评审」一节（逐维聚合、本地缩放、求和三步；`min_judges` / `max_disagreement` 不满足即 drop） |
 
 ### 3.7 `llm/` / `embedding/` — 基础设施
@@ -160,7 +162,7 @@ corpuslab/                          # 仓库根
 |------|------|
 | `renderers.py` | `alpaca / chatml / sharegpt / openai` 四渲染器（纯函数）+ `thinking` 的 `<think>` 渲染 + 反向解析（FileSource 用） |
 | `duckdb_sink.py` | 主 Sink：渲染后样本入 `samples` 表（事务：投影 + committed 事件 + pending 清理） |
-| `jsonl_sink.py` | JSONL 导出（`storage.export_jsonl` 或 `storage.type: jsonl` 传统模式） |
+| `jsonl_sink.py` | JSONL 导出（`storage.export_format: jsonl` 或 `storage.type: jsonl` 传统模式） |
 | `report.py` | 运行报告：drop 原因瀑布、评分分布、成本估算 |
 
 ---
@@ -343,19 +345,24 @@ tests/
 ├── conftest.py              # 通用 fixture：假 LLM（脚本化响应）、样本工厂、tmp 配置
 ├── config/
 │   ├── test_schema.py       # 死键报错、别名提示、必填约束
-│   ├── test_loader.py       # env 回退、端点解析、产量解析、格式推导推导
+│   ├── test_loader.py       # env 回退、端点解析、产量解析、格式推导
 │   └── test_validate.py     # 冲突/链合法性/资源存在/按子命令必填集
 ├── core/
 │   ├── test_pipeline.py     # 流式分组、批式屏障、drop 计数、跨策略去重
 │   ├── test_planner.py      # weight 归一化分摊、余数、count 覆盖、--strategy 重分摊
 │   ├── test_store.py        # 事务原子性、幂等 upsert、cache_cleanup 分级
-│   └── test_checkpoint.py   # resume 幂等、manifest 兼容性、LSH 重建、中断重跑
-├── strategies/              # 每策略一个文件：契约测试 + id 确定性 + lineage 断言
+│   ├── test_checkpoint.py   # resume 幂等、manifest 兼容性、LSH 重建、中断重跑
+│   ├── test_data_format.py  # Sample 契约（形态互斥、校验点）
+│   ├── test_output_layout.py# 输出布局（目录模式/单文件/jsonl 模式、导出开关）
+│   └── test_public_api.py   # 扩展面白名单（__all__）
+├── strategies/
+│   └── test_plan_contract.py# 七策略契约：id 唯一性与 seed 确定性
 ├── stages/                  # 每阶段：边界值 + drop 原因 + 状态入库
-├── judges/                  # 分数解析、聚合语义（DESIGN §6.3）、分歧过滤
+├── judges/
+│   ├── test_aggregate.py    # 分数解析、聚合语义、分歧过滤
+│   └── test_perplexity.py   # 两种模式的 NLL 解析与归一化
 └── e2e/
-    ├── test_run_topic.py    # 假 LLM 全流程（DuckDB 断言）
-    └── test_clean_score.py  # 独立命令 + FileSource 反向适配
+    └── test_flows.py        # run/clean/score 全流程（假 LLM，DuckDB 断言）
 ```
 
 **测试策略**：

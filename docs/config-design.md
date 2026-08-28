@@ -155,7 +155,7 @@ endpoints:
 | `type` | string | **必填** | 策略类型，见下 |
 | `weight` | float | 1.0 | `plan.count` 分摊比例（**自动归一化**，validate 提示） |
 | `count` | int | — | 显式覆盖本策略份额（边界见 §10.3） |
-| `field_map` | dict | `{}` | 输入文件字段到规范字段的映射（外来数据适配） |
+| `field_map` | dict | `{}` | 输入文件字段到规范字段的映射（**仅文件型策略**：`seed_driven` / `evol_instruct` / `document_qa` / `instruction_backtranslation`） |
 
 ### 6.1 七策略参数表
 
@@ -286,14 +286,15 @@ pipeline:
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `endpoint` | string | `llm` | 远端评审所用端点名（单裁判） |
-| `dimensions` | array | **必填**（启用评审时） | `[{name, label?, max?}]`，`max` 默认 10，分值 1~N |
+| `endpoint` | string | `llm` | 远端评审所用端点名（单裁判；未声明即 `llm`） |
+| `dimensions` | array | **必填**（远端评审时） | `[{name, label?, max?}]`，`max` 默认 10，分值 1~N |
 | `min_total` | float | 0.0 | 总分阈值，低于即过滤（量纲 = Σ各维 max，见下） |
 | `judges` | array | `[]` | 多裁判：`[{endpoint}]`；**非空时以 judges 为准，`endpoint` 被忽略（validate 提示）** |
 | `aggregation` | string | `mean` | `mean/min/max/median`，作用于「同维度 × 各裁判」 |
 | `min_judges` | int | 1 | 每样本最少成功裁判数，不足则 drop(`insufficient_judges`) |
 | `max_disagreement` | float | 0 | 单维 (max−min) 分差上限；超出则 drop(`judge_disagreement`)；0 表示不启用 |
-| `scorers` | array | `[]` | 本地打分器：`[{type: fasttext, model_path, weight}]`（fasttext 为可选 extra） |
+| `scorers` | array | `[]` | 本地打分器：`[{type: fasttext, model_path, weight, dimensions?}]`（fasttext 为可选 extra；`dimensions` 声明写入哪些维度，缺省为 scorer 内置） |
+| `perplexity` | dict | — | 困惑度打分器（见 §8.1）；启用后作为一个本地 scorer 参与 `min_total` 治理 |
 
 **聚合语义**（精确定义，实现以此为准）：
 
@@ -302,13 +303,33 @@ pipeline:
 3. `total_score = Σ 维度值`（绝对分量纲）；`min_total` 与之同量纲比较；
 4. `min_total` 不满足则 drop(`min_total`)。
 
+> **dimensions 为空的后果**：`judges` / `endpoint` 已声明但 `dimensions` 为空时，远端裁判不会执行，仅本地 scorers（fasttext / perplexity）运行（validate warning 提示）。
+
+### 8.1 `perplexity` — 困惑度打分器（route A）
+
+OpenAI 兼容 `/completions` logprobs 端点，输出归一化到 [0,1] 写入同名维度（`ppl_quality = clamp(1 − nll/nll_ceiling)`，自然文本 ≈ 0.6–0.9，乱码趋近 0）。
+
+| 字段 | 类型 | 默认 | 说明 |
+|------|------|------|------|
+| `type` | string | `perplexity` | 固定值 |
+| `mode` | string | `continuation` | `teacher_forced`（真 PPL，需自托管端点回显 `prompt_logprobs`，vLLM/SGLang）/ `continuation`（前缀条件 + 续写 NLL 代理，适配无回显的网关） |
+| `model` | string | 继承 `llm.model` | 打分模型 |
+| `base_url` | string | 继承 `llm.base_url` | 端点（beta 路径亦可） |
+| `api_key` | string | `$API_KEY` | 显式值优先 |
+| `dimensions` | array | `["ppl_quality"]` | 写入的维度名 |
+| `nll_ceiling` | float | 6.0 | 平均 NLL 到质量分的映射上界（NLL≥此值 → 0 分） |
+| `max_chars` | int | 4000 | 打分输入截断 |
+| `target_ratio` | float | 0.5 | `continuation` 模式的切分点（前缀/续写比例） |
+| `max_target_tokens` | int | 256 | 续写窗口 |
+| `weight` | float | 1.0 | 与其他本地 scorer 同语义 |
+
 ---
 
 ## 9. output — 落盘（DuckDB 后端）
 
 | 字段 | 类型 | 默认 | 说明 |
 |------|------|------|------|
-| `path` | string | **必填** | **DuckDB 库文件路径**（唯一后端；缺省扩展名 `.duckdb`） |
+| `path` | string | **必填** | 输出**目录**（目录模式，默认，布局见 §9.1）或 `.duckdb` 库文件路径（单文件兼容模式） |
 | `format` | string | 按策略推导 | `alpaca / chatml / sharegpt / openai`；tool_call 自动推导为 `openai` |
 | `multi_turn` | bool | false | 多轮对话（策略可覆盖） |
 | `thinking` | bool | false | 把 `reasoning` 渲染进 `<think>` 块（原始 `reasoning` 字段始终保留） |
@@ -316,8 +337,7 @@ pipeline:
 | `cache_cleanup` | bool | true | 成功后只清瞬时表（审计事件、在途缓冲）；**终态集合、去重状态、scores、embeddings 全部保留**（保证 resume 精确） |
 | `storage.type` | string | `duckdb` | `duckdb`（默认）或 `jsonl`（传统纯文件模式，`path` 即 JSONL 文件） |
 | `storage.table` | string | `samples` | DuckDB 表名 |
-| `storage.export_parquet` | bool | true | 目录模式下缺省导出 `<dir>/<table>.parquet`（列式，DuckDB 原生 COPY） |
-| `storage.export_jsonl` | string | — | 可选：额外导出行式 JSONL（目录模式下相对路径解析到目录内） |
+| `storage.export_format` | string \| null | `parquet` | 导出格式三态：`parquet`（默认，列式，DuckDB 原生 COPY）/ `jsonl`（行式）/ `null`（仅状态库，无导出文件）。路径自动派生为 `<dir>/<table>.<fmt>`（单文件模式下落在库文件同目录） |
 
 ### 9.1 输出布局
 
@@ -325,9 +345,8 @@ pipeline:
 output.path 语义（storage.type=duckdb 时）：
   目录模式（默认）:  path 是一个目录
       <path>/corpuslab.duckdb   状态库（samples + 检查点全部状态）
-      <path>/samples.parquet    列式导出（export_parquet 缺省 true）
-      <path>/samples.jsonl      行式导出（仅 export_jsonl 配置时）
-  单文件模式（兼容）:  path 以 .duckdb 结尾，path 即状态库本身
+      <path>/samples.parquet    导出文件（export_format 缺省 parquet；jsonl 则为 samples.jsonl；null 则无）
+  单文件模式（兼容）:  path 以 .duckdb 结尾，path 即状态库本身（导出文件落同目录）
   纯文件模式:          storage.type=jsonl，path 即 JSONL 文件
 ```
 
@@ -351,7 +370,7 @@ resolve_endpoint(name):
 ```
 
 - `endpoints.<name>` 未声明的字段逐项继承 `llm`，不整段替换；
-- 阶段覆盖（`strategies[].phases.<p>`）**只允许** `params` 类字段（`temperature / max_tokens`），这是唯一允许的第三层。
+- 阶段覆盖（`strategies[].phases.<phase>`）的值是**与 `llm.params` 同结构的采样参数字典**，整段合并（update）后作为该阶段调用参数；`phase` 名由策略定义：`evol_instruct`（`evolve` / `answer`）、`instruction_backtranslation`（`backtranslate`）。这是唯一允许的第三层。
 
 ### 10.2 格式推导
 
@@ -386,7 +405,7 @@ embedding.base_url : 显式值优先，否则 $EMBEDDING_BASE_URL
 
 **`.env` 自动加载**：配置目录或当前目录存在 `.env` 时，loader 自动读取
 （`KEY=VALUE` 行，`#` 注释，**不覆盖**已存在的环境变量）——凭证放 `.env`
-不入库，代码零改动。示例见 `examples/deepseek.yaml` + 仓库根 `.env`。
+不入库，代码零改动。示例见 `examples/corpuslab.yaml` + 仓库根 `.env`。
 
 ---
 
@@ -397,17 +416,20 @@ embedding.base_url : 显式值优先，否则 $EMBEDDING_BASE_URL
 | 类别 | 规则 | 级别 |
 |------|------|------|
 | 死键 | 未知字段、历史别名（`total_count` 提示改 `count`） | error |
-| 必填（run） | `llm.model`、`strategies` 非空、`output.path`、启用评审时 `judge.dimensions` | error |
-| 必填（score） | `llm.model`、`judge.dimensions`（或 scorers 非空）、输入存在 | error |
+| 必填（run） | `llm.model`、`strategies` 非空、`output.path` | error |
+| 必填（score） | `llm.model`、`judge.dimensions`（或 scorers / perplexity 非空）、输入存在 | error |
 | 必填（clean） | 输入存在 | error |
 | 产量冲突 | 规则见 §10.3（含"显式 count 之和 > plan.count"） | error |
 | 链合法性 | `pipeline` 为空 | warning |
 | 链合法性 | 批式阶段之后还有流式阶段 | warning（语义可运行但流式收益丢失） |
-| 维度冲突 | `scorers` 维度与 `dimensions` 重名且语义不符 | warning |
+| 评审配置 | `judges` / `endpoint` 已声明但 `judge.dimensions` 为空（远端裁判不运行，仅本地 scorers） | warning |
+| 评审配置 | `max_disagreement` 设了但 `judges` 为空（单裁判无分歧可言） | warning |
+| 维度引用 | `scorers[].dimensions` 引用了未在 `judge.dimensions` 声明的维度（该维度不生效） | warning |
 | 端点引用 | `judge.endpoint` / `judges[].endpoint` 指向未声明端点 | error |
 | 端点冗余 | `judges` 非空且 `judge.endpoint` 同时显式声明 | warning |
 | 资源存在 | `seed_file / document_file / scorers[].model_path` 可读 | error |
-| 范围 | `crossover + mutate ≤ 1`（超出自动归一化并提示）、`ratio_bounds[0] < [1]` | warning |
+| 范围 | `crossover + mutate ≤ 1`（超出自动归一化并提示） | warning |
+| 范围 | `ratio_bounds` 非 `[min, max]`（min ≥ max 或长度 ≠ 2） | error（加载期拒绝） |
 | 量纲 | `min_total / Σdimensions.max` 比值 < 0.3 或 > 1 | warning |
 
 ---
@@ -443,7 +465,7 @@ embedding.base_url : 显式值优先，否则 $EMBEDDING_BASE_URL
 | `random_seed` | `run.seed` | 移段 |
 | `output.checkpoint_interval` | 删除 | 状态库即检查点 |
 | `output.cache_cleanup_on_success` | `output.cache_cleanup` | 缩短 |
-| `output.path`（jsonl） | `output.path`（.duckdb） | DuckDB 唯一后端；jsonl 经 `storage.export_jsonl` 导出 |
+| `output.path`（jsonl） | `output.path`（.duckdb） | DuckDB 唯一后端；jsonl 经 `storage.export_format: jsonl` 导出 |
 
 ---
 
@@ -533,7 +555,7 @@ output:
   storage:
     type: duckdb
     table: samples
-    export_jsonl: ./generated_sft.jsonl
+    export_format: jsonl
 ```
 
 ---

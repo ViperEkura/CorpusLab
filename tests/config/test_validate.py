@@ -2,6 +2,7 @@
 per-subcommand required sets (docs/project-structure.md §9)."""
 from __future__ import annotations
 
+from corpuslab.config import schema as S
 from corpuslab.config import validate as vld
 from tests.conftest import make_config
 
@@ -73,3 +74,16 @@ def test_weight_sum_warning(tmp_path):
         s.weight = 2.0                                # sum 4 → normalized
     issues = vld.check(cfg, "run")
     assert any("auto-normalized" in m for lv, m in issues if lv == "warning")
+
+
+def test_validate_judges_without_dimensions_warns(tmp_path):
+    cfg = make_config(tmp_path)
+    cfg.judge.dimensions = []
+    cfg.judge.judges = [S.JudgeRef(endpoint="llm")]
+    issues = vld.check(cfg, "run")
+    assert any("dimensions is empty" in m for lv, m in issues
+               if lv == "warning")
+    # scorers-only judging is legitimate: no error for missing dimensions
+    cfg.judge.judges = []
+    issues = vld.check(cfg, "run")
+    assert not any("dimensions is empty" in m for lv, m in issues)

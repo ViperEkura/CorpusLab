@@ -36,7 +36,7 @@
 |------|------|----------|----------|
 | **A. 可免费重算** | length/stats 判定（纯函数）、LSH 索引结构（由签名重建）、聚类结果 | 不持久化，resume 时重算 | CPU 秒级，零成本 |
 | **B. 花钱不可重算** | LLM 生成结果、embedding 向量、judge 分数 | **必须持久化**（`samples` / `embeddings` / `scores` 表） | 重新调 API，真金白银 |
-| **C. 纯进度** | 哪些 TaskSpec 已规划 / 已执行 / 已终态 | `planned` / `executed` / `dropped` 记录 | 重跑 = 浪费 B 类 |
+| **C. 纯进度** | 哪些 TaskSpec 已规划 / 已终态 | `planned` / `samples`+`dropped`（终态集合） | 重跑 = 浪费 B 类 |
 
 各 Stage 的状态处理：
 
@@ -58,13 +58,19 @@
 id 必须满足：**在 LLM 调用之前就能算出**（resume 要在「是否生成」这个决策点使用它），且**确定性**（同 seed 同配置得到同 id）。因此 id 在 **Plan 阶段**由任务单的槽位坐标派生，而非内容哈希：
 
 ```
-topic_driven : "topic:{strategy_seq}:{topic}|{difficulty}|{aspect}|{n}"
-evol_instruct: "evol:{seed_id}:r{round}:{k}"          # 每轮一个 id，支持进化中途续跑
-document_qa  : "docqa:{doc_id}:{chunk_start}-{chunk_end}"
-backtrans    : "bt:{doc_id}:{offset}"
-seed_driven  : "seed:{seed_id}|{operator}|{n}"
-tool_call    : "tool:{topic}|{n}"
-deep_thinking: 同 topic_driven 前缀 dt:
+id = sha256( "|".join(parts) )[:16]        # 16 位十六进制串（非可读坐标）
+```
+
+各策略的 parts（`derive_id(*parts)` 的入参，`|` 连接后哈希）：
+
+```
+topic_driven : "topic" | {type} | {topic} | {k=v}…(槽位按名排序) | {n}
+deep_thinking: 同上（{type} = deep_thinking，即首个 parts 仍为 "topic"）
+evol_instruct: "evol" | {seed_id} | "r{round}" | {k}
+document_qa  : "docqa" | {doc_id} | {chunk_start} | {chunk_end}
+backtrans    : "bt" | {doc_id} | {n} | {len(text)}
+seed_driven  : "seed" | {seed_id} | {operator} | {n}
+tool_call    : "tool" | {topic} | {n}
 ```
 
 - id 写入 `TaskSpec.id`，随样本进入 `metadata.id`（补齐原契约缺口：project-structure §5.3 依赖 `sample_id` 而 Sample 无此字段）；
@@ -97,7 +103,7 @@ CREATE TABLE embeddings(
 );
 -- 流式去重状态
 CREATE TABLE fingerprints(hash VARCHAR PRIMARY KEY, sample_id VARCHAR);
-CREATE TABLE minhash_sigs(sample_id VARCHAR PRIMARY KEY, sig DOUBLE[]);
+CREATE TABLE minhash_sigs(sample_id VARCHAR PRIMARY KEY, sig VARCHAR);  -- 签名为 JSON 字符串（uint64 数组序列化，防浮点精度损失）
 -- 评审缓存（按端点；部分裁判完成也保留）
 CREATE TABLE scores(
   id VARCHAR, endpoint VARCHAR, scores JSON, total DOUBLE,
@@ -116,7 +122,7 @@ CREATE TABLE kv(k VARCHAR PRIMARY KEY, v VARCHAR);
 ```
 
 - `output.path` 即该库文件路径（缺省扩展名 `.duckdb`）；
-- JSONL 成为**导出格式**（`storage.export_jsonl`），不再是主存储；
+- JSONL 成为**导出格式**（`storage.export_format: jsonl`），不再是主存储；
 - `cache_cleanup` 分级：成功后只清**瞬时表**（`events` 审计日志、`pending` 在途缓冲）；**终态集合（`samples / dropped / planned`）、去重状态（`fingerprints / minhash_sigs`）、`scores`、`embeddings` 全部保留**——否则后续 `--resume` 会重新生成所有曾 drop 的样本（白花 LLM 钱）或让重复样本漏网。不变式：重跑既不产生重复样本，也不在已终态的 id 上重复花钱。
 
 ---
@@ -165,12 +171,14 @@ resume():
 
 | 键 | 不一致时的处置 |
 |----|----------------|
-| `version` | 拒绝（schema 大版本变更） |
+| `version` | 拒绝（DuckDB 表结构大版本变更） |
+| `format_version` | 拒绝（Sample 形态破坏性变更） |
 | `config_hash` | 拒绝（提示 `--discard-state`） |
 | `seed` | 拒绝（id 派生受 seed 影响） |
 | `minhash_num_perm` | 丢弃 `minhash_sigs` 并警告 |
 | `embedding_model` | 丢弃 `embeddings` 并警告 |
-| `format / renderer` | 仅重渲染投影，不丢状态 |
+
+> 后两个键仅在配置了对应阶段时写入（`num_perm` / `embedding_model` 缺省不落 manifest）。
 
 ---
 

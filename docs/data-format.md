@@ -23,7 +23,8 @@
 ```jsonc
 {
   // ── 必需 ──────────────────────────────────────────────
-  "id": "topic:0:Python|easy|concept|3",      // string，Plan 期确定性派生，非空
+  "id": "0e4060929b1d3bf1",   // string，16 位十六进制 = sha256("topic|topic_driven|Python|difficulty=easy|3")[:16]
+                               // Plan 期确定性派生（派生坐标见 checkpoint-design.md §3），非空
   "strategy": "topic_driven",                 // string，策略类型，非空
   "metadata": {                               // object，必需
     "lineage": {...},                         // 溯源（结构由策略决定，见 2.3）
@@ -90,7 +91,7 @@
 | 表 | 行格式 | 约束 |
 |----|--------|------|
 | `samples` | `id, strategy, payload(JSON=Sample), rendered(JSON=渲染后), total_score, created_at` | id 主键；`payload` 满足 §2 |
-| `events` | `seq, t, id, strategy, data(JSON)` | 追加；t ∈ planned/committed/dropped/execute_failed |
+| `events` | `seq, t, id, strategy, data(JSON)` | 追加；t ∈ planned/committed/dropped |
 | `pending` | `id, strategy, sample(JSON)` | id 主键；批式屏障背压缓冲 |
 | `embeddings` | `text_hash, model, vec(DOUBLE[])` | (text_hash, model) 主键；内容寻址 |
 | `fingerprints` | `hash, sample_id` | hash 主键；SHA256 去重状态 |
@@ -98,7 +99,7 @@
 | `scores` | `id, endpoint, scores(JSON), total` | (id, endpoint) 主键；部分裁判结果也保留 |
 | `dropped` | `id, strategy, stage, reason` | id 主键；终态（resume 跳过依据） |
 | `planned` | `id, strategy, spec(JSON=TaskSpec)` | id 主键；幂等 |
-| `kv` | `k, v` | manifest（format_version / schema_version / config_hash / seed / num_perm / embedding_model） |
+| `kv` | `k, v` | manifest（实际键：`version` / `format_version` / `config_hash` / `seed`，可选 `minhash_num_perm` / `embedding_model`） |
 
 ---
 

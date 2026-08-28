@@ -37,6 +37,10 @@ def _alias_hints(data: dict) -> list:
             for k in st:
                 if k in S.ALIASES:
                     hints.append(f"strategy `{st.get('type')}`: `{k}` → `{S.ALIASES[k]}`")
+    storage = ((data.get("output") or {}).get("storage") or {})
+    for k in storage:
+        if k in S.ALIASES:
+            hints.append(f"output.storage: `{k}` → `{S.ALIASES[k]}`")
     return hints
 
 
@@ -116,36 +120,37 @@ def derive_format(cfg: S.Config) -> str:
     return "openai" if has_tool else "alpaca"
 
 
+def _export_path(base_dir: str, storage: S.StorageCfg) -> Optional[str]:
+    """storage.export_format → concrete file path (None → no export)."""
+    if storage.export_format is None:
+        return None
+    return os.path.join(base_dir, f"{storage.table}.{storage.export_format}")
+
+
 def layout_for_path(path: str, storage: S.StorageCfg) -> dict:
     """Resolve an output layout from a path + storage config.
 
     Modes for storage.type=duckdb:
     - **dir mode** (default): path is a directory containing
-      `corpuslab.duckdb` (state store) + `samples.parquet` (columnar export,
-      default on) + optional `samples.jsonl`;
+      `corpuslab.duckdb` (state store) + the export file
+      `<dir>/<table>.<fmt>` per `export_format` (default parquet);
     - **single-file mode** (compat): path ends with `.duckdb` and is the
-      state store itself (exports only when explicitly configured).
-    storage.type=jsonl → plain-file mode.
+      state store itself (export file, when enabled, lands next to it);
+    storage.type=jsonl → plain-file mode (path IS the jsonl output).
 
-    Returns {db_path, dir_mode, parquet_path, jsonl_path}.
+    Returns {db_path, dir_mode, export_path}.
     """
     if storage.type == "jsonl" or path.endswith(".jsonl"):
-        return {"db_path": path, "dir_mode": False,
-                "parquet_path": None, "jsonl_path": path}
+        return {"db_path": path, "dir_mode": False, "export_path": None}
 
     if path.endswith(".duckdb"):
+        db_dir = os.path.dirname(os.path.abspath(path)) or "."
         return {"db_path": path, "dir_mode": False,
-                "parquet_path": None, "jsonl_path": storage.export_jsonl}
+                "export_path": _export_path(db_dir, storage)}
 
     db_path = os.path.join(path, "corpuslab.duckdb")
-    parquet_path = (os.path.join(path, f"{storage.table}.parquet")
-                    if storage.export_parquet else None)
-    # In dir mode, a relative export_jsonl resolves inside the output dir
-    jsonl_path = (os.path.join(path, storage.export_jsonl)
-                  if storage.export_jsonl else
-                  os.path.join(path, f"{storage.table}.jsonl"))
     return {"db_path": db_path, "dir_mode": True,
-            "parquet_path": parquet_path, "jsonl_path": jsonl_path}
+            "export_path": _export_path(path, storage)}
 
 
 def output_layout(cfg: S.Config) -> dict:

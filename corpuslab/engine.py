@@ -239,15 +239,15 @@ async def run_flow(cfg: S.Config, *, cli_count: Optional[int] = None,
         assert store is not None
         sink = DuckDBSink(fmt_out, thinking, cfg.output.storage.table)
         report = await sink.write(_scored(), ctx)
-        # Exports: parquet (dir mode, default) + optional jsonl
-        parquet_path = layout["parquet_path"]
-        if parquet_path:
-            n = store.export_parquet(parquet_path)
-            log.info("parquet export: %d rows → %s", n, parquet_path)
-        jsonl_path = layout["jsonl_path"]
-        if jsonl_path:
-            n = sink.export_jsonl(store, jsonl_path)
-            log.info("jsonl export: %d rows → %s", n, jsonl_path)
+        # Export: one projection file per storage.export_format
+        export_path = layout["export_path"]
+        if export_path:
+            if export_path.endswith(".parquet"):
+                n = store.export_parquet(export_path)
+                log.info("parquet export: %d rows → %s", n, export_path)
+            else:
+                n = sink.export_jsonl(store, export_path)
+                log.info("jsonl export: %d rows → %s", n, export_path)
 
     if store is not None and cfg.output.cache_cleanup and not preview:
         store.cache_cleanup()
@@ -282,10 +282,12 @@ async def clean_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
     else:
         sink = DuckDBSink(fmt_out, thinking, storage.table)
         report = await sink.write(pipeline.run(_files(), ctx), ctx)
-        if layout["parquet_path"]:
-            store.export_parquet(layout["parquet_path"])
-        if layout["jsonl_path"]:
-            sink.export_jsonl(store, layout["jsonl_path"])
+        export_path = layout["export_path"]
+        if export_path:
+            if export_path.endswith(".parquet"):
+                store.export_parquet(export_path)
+            else:
+                sink.export_jsonl(store, export_path)
         store.close()
     return report
 
@@ -324,9 +326,11 @@ async def score_flow(cfg: S.Config, input_path: str, output_path: Optional[str],
     else:
         sink = DuckDBSink(fmt_out, thinking, storage.table)
         report = await sink.write(_scored(), ctx)
-        if layout["parquet_path"]:
-            store.export_parquet(layout["parquet_path"])
-        if layout["jsonl_path"]:
-            sink.export_jsonl(store, layout["jsonl_path"])
+        export_path = layout["export_path"]
+        if export_path:
+            if export_path.endswith(".parquet"):
+                store.export_parquet(export_path)
+            else:
+                sink.export_jsonl(store, export_path)
         store.close()
     return report

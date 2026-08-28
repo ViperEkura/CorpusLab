@@ -25,6 +25,8 @@ ALIASES: Dict[str, str] = {
     "min_total_score": "min_total",
     "api_key_env": "api_key (leave empty to read the env var)",
     "base_url_env": "base_url (leave empty to read the env var)",
+    "export_parquet": "storage.export_format (parquet | jsonl | null)",
+    "export_jsonl": "storage.export_format: jsonl",
 }
 
 
@@ -308,8 +310,9 @@ class JudgeCfg(Strict):
 class StorageCfg(Strict):
     type: Literal["duckdb", "jsonl"] = "duckdb"
     table: str = "samples"
-    export_parquet: bool = True            # in dir mode, default export <dir>/samples.parquet
-    export_jsonl: Optional[str] = None     # explicit path; in dir mode defaults to <dir>/samples.jsonl
+    export_format: Optional[Literal["parquet", "jsonl"]] = "parquet"
+    # tri-state: "parquet" (default) / "jsonl" / None (state store only).
+    # Resolved to <dir>/<table>.<fmt> next to the state store.
 
 
 class OutputCfg(Strict):

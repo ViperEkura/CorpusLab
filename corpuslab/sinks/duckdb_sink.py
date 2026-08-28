@@ -26,7 +26,7 @@ class DuckDBSink:
         return report
 
     def export_jsonl(self, store: Any, path: str) -> int:
-        """Optional post-run export of rendered rows (storage.export_jsonl)."""
+        """Post-run export of rendered rows (storage.export_format: jsonl)."""
         rows = store.read_rendered()
         with open(path, "w", encoding="utf-8") as f:
             for r in rows:
